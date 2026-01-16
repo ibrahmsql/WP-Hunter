@@ -1,7 +1,5 @@
-# WP-Hunter
-
 <div align="center">
-  <img src="banner.png" alt="WP-Hunter Banner" width="800"/>
+  <img src="banner.png" alt="WP-Hunter Banner" width="600"/>
 </div>
 
 <p align="center">
