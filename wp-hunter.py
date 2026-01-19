@@ -1,6 +1,7 @@
 import requests
 import argparse
 import sys
+import os
 from datetime import datetime
 import time
 import json
@@ -360,7 +361,7 @@ def process_page_task(
             found_count_ref[0] += 1
             display_plugin_console(found_count_ref[0], p, analysis_data)
 
-            if args.output:
+            if args.output or args.download > 0:
                 collected_results.append({
                     'name': p.get('name'),
                     'slug': slug,
@@ -405,10 +406,60 @@ def save_results(results: List[Dict[str, Any]], filename: str, format_type: str)
         
         with print_lock:
             print(f"{Colors.GREEN}[+] Results saved to {filename}{Colors.RESET}")
-            
+
     except Exception as e:
-        with print_lock:
-            print(f"{Colors.RED}[!] Error saving results: {e}{Colors.RESET}")
+        print(f"{Colors.RED}[!] Error saving results: {e}{Colors.RESET}")
+
+def download_top_plugins(results: List[Dict[str, Any]], download_limit: int, base_dir: str = ".") -> None:
+    """Downloads top N plugins sorted by VPS score to ./Plugins/ directory."""
+    if not results:
+        print(f"{Colors.YELLOW}[!] No results to download.{Colors.RESET}")
+        return
+
+    # Sort by score (highest first)
+    sorted_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+    plugins_to_download = sorted_results[:download_limit]
+
+    # Create Plugins directory
+    plugins_dir = os.path.join(base_dir, "Plugins")
+    os.makedirs(plugins_dir, exist_ok=True)
+
+    print(f"\n{Colors.BOLD}{Colors.CYAN}=== Downloading Top {len(plugins_to_download)} High-Score Plugins ==={Colors.RESET}")
+    print(f"Download directory: {os.path.abspath(plugins_dir)}\n")
+
+    downloaded_count = 0
+    for idx, plugin in enumerate(plugins_to_download, 1):
+        slug = plugin.get('slug', 'unknown')
+        version = plugin.get('version', 'latest')
+        score = plugin.get('score', 0)
+        download_url = plugin.get('download_link')
+
+        if not download_url:
+            print(f"{Colors.YELLOW}[{idx}] Skipping {slug} - No download link available{Colors.RESET}")
+            continue
+
+        filename = f"{slug}.{version}.zip"
+        filepath = os.path.join(plugins_dir, filename)
+
+        try:
+            print(f"{Colors.CYAN}[{idx}] Downloading: {slug} (v{version}) - VPS Score: {score}{Colors.RESET}")
+            response = session.get(download_url, stream=True, timeout=60)
+            response.raise_for_status()
+
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            file_size = os.path.getsize(filepath) / 1024  # KB
+            print(f"{Colors.GREEN}    ✓ Saved: {filename} ({file_size:.1f} KB){Colors.RESET}")
+            downloaded_count += 1
+
+        except requests.exceptions.RequestException as e:
+            print(f"{Colors.RED}    ✗ Failed: {e}{Colors.RESET}")
+        except IOError as e:
+            print(f"{Colors.RED}    ✗ File error: {e}{Colors.RESET}")
+
+    print(f"\n{Colors.GREEN}[✓] Download complete: {downloaded_count}/{len(plugins_to_download)} plugins saved to {plugins_dir}{Colors.RESET}")
 
 def print_banner() -> None:
     banner = f"""{Colors.BOLD}{Colors.CYAN}
@@ -438,6 +489,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--abandoned', action='store_true', help='Show only plugins not updated for > 2 years')
     parser.add_argument('--output', type=str, help='Output file name (e.g., results.json)')
     parser.add_argument('--format', type=str, default='json', choices=['json', 'csv', 'html'], help='Output format')
+    parser.add_argument('--download', type=int, default=0, metavar='N', help='Download top N plugins (sorted by VPS score) to ./Plugins/')
     return parser.parse_args()
 
 def main() -> None:
@@ -493,6 +545,10 @@ def main() -> None:
 
     if args.output and collected_results:
         save_results(collected_results, args.output, args.format)
+
+    # Download top plugins if requested
+    if args.download > 0 and collected_results:
+        download_top_plugins(collected_results, args.download)
 
     print(f"\n{Colors.GREEN}[✓] Task Completed. Total {found_count_ref[0]} targets listed.{Colors.RESET}")
 

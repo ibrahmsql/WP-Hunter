@@ -73,6 +73,7 @@ python3 wp-hunter.py
 - `--abandoned`: Show only plugins that haven't been updated in over 2 years
 - `--output`: Save results to a file (e.g., `results.json`)
 - `--format`: Output format (choices: `json`, `csv`, `html`, default: `json`)
+- `--download N`: Automatically download top N plugins (sorted by VPS score) to `./Plugins/`
 
 ### Example Commands
 
@@ -89,6 +90,11 @@ python3 wp-hunter.py --sort updated --pages 3 --limit 20
 Find "zombie" plugins (abandoned > 2 years) and save report:
 ```bash
 python3 wp-hunter.py --abandoned --limit 50 --output zombie_plugins.json
+```
+
+Auto-download top 5 highest-scoring plugins for analysis:
+```bash
+python3 wp-hunter.py --smart --download 5
 ```
 
 ## Features
