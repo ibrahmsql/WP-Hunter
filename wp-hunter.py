@@ -89,28 +89,46 @@ def calculate_vps_score(
     sec_flags: List[str], 
     feat_flags: List[str]
 ) -> int:
-    """Calculates the Vulnerability Probability Score (VPS) based on heuristics."""
+    """
+    Calculates the Vulnerability Probability Score (VPS) based on 'Neglect & Surface' model.
+    High Score = High Probability of Unknown Vulnerabilities (0-day) or Unpatched Code.
+    """
     score = 0
     
-    if matched_tags: score += 25
+    # 1. CODE ROT (Maintenance Latency) - Max 40 pts
+    # The longer code sits untouched, the more likely new attack vectors work against it.
+    if days_ago > 730: score += 40      # Abandoned (> 2 years) - Critical Risk
+    elif days_ago > 365: score += 25    # Neglected (> 1 year)
+    elif days_ago > 180: score += 15    # Stale (> 6 months)
     
-    if support_rate < 50: score += 20
-    elif support_rate < 80: score += 10
+    # 2. ATTACK SURFACE (Intrinsic Risk) - Max 30 pts
+    # Plugins handling money, files, or user input have a larger attack surface.
+    if matched_tags: score += 30
+
+    # 3. DEVELOPER NEGLECT (Support Health) - Max 15 pts
+    # If the dev ignores users, they likely ignore security reports too.
+    if support_rate < 20: score += 15
+    elif support_rate < 50: score += 10
     
+    # 4. TECHNICAL DEBT (Compatibility) - Max 15 pts
     try:
         if float(tested_ver) < CURRENT_WP_VERSION - 0.5: 
             score += 15
     except (ValueError, TypeError): 
         pass
         
-    rating = plugin.get('rating', 0) / 20
+    # 5. REPUTATION (Quality Signal) - Max 10 pts
+    rating = plugin.get('rating', 0) / 20  # Convert 100 scale to 5
     if rating < 3.5: score += 10
     
-    if days_ago < 30: score += 10
+    # BONUS: Active Maintenance Reward
+    # If updated recently, the dev is present. We reduce risk slightly.
+    if days_ago < 14: score = max(0, score - 5)
     
-    if len(sec_flags) > 0: score += 20     
-    elif len(feat_flags) > 0: score += 15
-    
+    # Note: We do NOT add points for "Security Fixes" (sec_flags). 
+    # A recent security fix implies the dev is patching holes. 
+    # We display the flag for N-day analysis, but it doesn't increase "0-day probability".
+
     return min(score, 100)
 
 def get_score_display(score: int) -> str:
@@ -303,6 +321,10 @@ def process_page_task(
         if args.max > 0 and installs > args.max: continue
 
         days_ago = calculate_days_ago(p.get('last_updated'))
+        
+        if args.min_days > 0 and days_ago < args.min_days: continue
+        if args.max_days > 0 and days_ago > args.max_days: continue
+
         if args.abandoned and days_ago < 730: continue
 
         plugin_tags = list(p.get('tags', {}).keys())
@@ -490,6 +512,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--output', type=str, help='Output file name (e.g., results.json)')
     parser.add_argument('--format', type=str, default='json', choices=['json', 'csv', 'html'], help='Output format')
     parser.add_argument('--download', type=int, default=0, metavar='N', help='Download top N plugins (sorted by VPS score) to ./Plugins/')
+    parser.add_argument('--min-days', type=int, default=0, help='Minimum days since last update')
+    parser.add_argument('--max-days', type=int, default=0, help='Maximum days since last update')
     return parser.parse_args()
 
 def main() -> None:
@@ -507,6 +531,11 @@ def main() -> None:
             args.pages = 100
             print(f"{Colors.YELLOW}[!] Increased page scan limit to 100 to dig deeper for abandoned plugins.{Colors.RESET}")
     
+    # Increase scan depth for date filtering
+    if args.min_days > 0 and args.pages == 5:
+        args.pages = 50
+        print(f"{Colors.YELLOW}[!] Increased page scan limit to 50 to find plugins older than {args.min_days} days.{Colors.RESET}")
+    
     print(f"\n{Colors.BOLD}{Colors.WHITE}=== WP Hunter ==={Colors.RESET}")
     range_str = f"{args.min}-{args.max}" if args.max > 0 else f"{args.min}+"
     print(f"Mode: {args.sort.upper()} | Range: {range_str} installs")
@@ -516,6 +545,10 @@ def main() -> None:
 
     if args.smart: print(f"{Colors.RED}[!] Smart Filter: ON{Colors.RESET}")
     if args.abandoned: print(f"{Colors.RED}[!] Abandoned Filter: ON (>730 days){Colors.RESET}")
+    if args.min_days > 0 or args.max_days > 0:
+        d_min = args.min_days
+        d_max = args.max_days if args.max_days > 0 else "∞"
+        print(f"{Colors.RED}[!] Update Age Filter: {d_min} to {d_max} days{Colors.RESET}")
 
     print("=" * 70)
 

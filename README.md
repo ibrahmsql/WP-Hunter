@@ -29,13 +29,13 @@ WP-Hunter is a **WordPress plugin reconnaissance and reconnaissance tool**. It i
 
 *Generated HTML report showing vulnerability risks*
 
-## Core Concept: Discovery, Not Exploitation
+## Core Concept: "Neglect & Surface" Model
 
-WP-Hunter follows a "passive-first" reconnaissance approach:
-- **Heuristic Scoring**: Uses weighted algorithms to estimate the likelihood of security risks.
-- **Changelog Analysis**: Scans recent updates for security-related keywords.
-- **Contextual Awareness**: Flags plugins handling sensitive data (e.g., payments, user roles).
-- **No Active Scanning**: Performs data gathering from official APIs without intrusive probes against live sites.
+WP-Hunter follows a professional risk assessment model focusing on **Abandonment** and **Complexity**:
+- **Code Rot (Highest Risk)**: Plugins not updated for years are the breeding ground for vulnerabilities.
+- **Attack Surface**: Plugins that handle payments, uploads, or user input naturally have more room for error.
+- **Developer Neglect**: Low support resolution rates indicate a developer who may ignore security reports.
+- **No Penalty for Security Fixes**: Unlike basic scanners, we do not penalize developers for patching bugs. A recent security update is a sign of *good* hygiene.
 
 ## Installation
 
@@ -64,49 +64,92 @@ python3 wp-hunter.py
 
 ### Command Line Options
 
-- `--pages`: Maximum number of pages to scan (default: 5)
+- `--pages`: Maximum number of pages to scan (default: 5). *See "Understanding Page Logic" below.*
 - `--limit`: Maximum number of targets to list (0 = Unlimited, default: 0)
 - `--min`: Minimum active installations (default: 1000)
 - `--max`: Maximum active installations (0 = Unlimited, default: 0)
 - `--sort`: Sort method (choices: new, updated, popular, default: updated)
 - `--smart`: Show only plugins in risky categories
 - `--abandoned`: Show only plugins that haven't been updated in over 2 years
+- `--min-days`: Minimum days since last update (e.g., find plugins updated > 3 days ago)
+- `--max-days`: Maximum days since last update (e.g., find plugins updated < 10 days ago)
 - `--output`: Save results to a file (e.g., `results.json`)
 - `--format`: Output format (choices: `json`, `csv`, `html`, default: `json`)
 - `--download N`: Automatically download top N plugins (sorted by VPS score) to `./Plugins/`
 
+### Understanding Page Logic (`--pages`)
+
+The tool fetches data in "pages" from the WordPress API, where **1 page = 100 plugins**.
+- **Default (5 pages)**: Scans the most recent 500 plugins.
+- **Auto-Expansion**: If you filter by date (e.g., `--min-days 30`), the tool automatically increases the page limit (e.g., to 50 or 100 pages) to ensure it digs deep enough to find matching plugins.
+- **Manual Control**: You can always override this with `--pages 50` (scans 5000 plugins) for deeper reconnaissance.
+
 ### Example Commands
 
-Focus on high-risk categories with installation limits:
+**1. Find Specific Update Windows (NEW)**
+Find plugins updated between 3 and 10 days ago:
+```bash
+python3 wp-hunter.py --min-days 3 --max-days 10
+```
+
+**2. Find Recently Updated Plugins**
+Find plugins updated in the last 5 days:
+```bash
+python3 wp-hunter.py --max-days 5
+```
+
+**3. Focus on High-Risk Categories**
+Search for e-commerce, forms, or upload plugins with specific install counts:
 ```bash
 python3 wp-hunter.py --limit 10 --min 1000 --max 5000 --smart
 ```
 
-Review probability scores for recently updated plugins:
-```bash
-python3 wp-hunter.py --sort updated --pages 3 --limit 20
-```
-
-Find "zombie" plugins (abandoned > 2 years) and save report:
+**4. Find "Zombie" Plugins**
+Find plugins abandoned for more than 2 years and save the report:
 ```bash
 python3 wp-hunter.py --abandoned --limit 50 --output zombie_plugins.json
 ```
 
-Auto-download top 5 highest-scoring plugins for analysis:
+**5. Auto-Download High-Risk Plugins**
+Download the top 5 highest-scoring plugins for manual code review:
 ```bash
 python3 wp-hunter.py --smart --download 5
 ```
 
-## Features
+## 🎯 Hunter Strategies (Tips for Researchers)
 
-- **VPS Scoring**: Generates a risk probability score (0-100) based on multiple factors.
-- **Security Signal Detection**: Flags potential security patches in changelogs.
-- **Risk Identification**: Automatically categorizes plugins by their functional sensitivity.
-- **WP Version Compatibility**: Checks if plugins are tested against the latest WordPress releases.
-- **Direct Research Links**: Provides quick access to Trac logs, **CVE database**, and **WPScan** for deeper manual analysis.
-- **Data Export**: Save reconnaissance results to **JSON**, **CSV**, or **HTML** for reporting.
-- **Author Reputation**: Highlights trusted authors (Automattic/WordPress) to help focus on less-known sources.
-- **High Performance**: Uses **multi-threaded** scanning to process multiple pages concurrently.
+If you are looking for CVEs or bug bounties, try these specific workflows:
+
+### 1. The "Zombie" Hunt (High Success Rate)
+Target plugins that are widely used but abandoned.
+*   **Logic:** Legacy code often lacks modern security standards (e.g., missing nonces, weak sanitization) that are standard today.
+*   **Command:** `python3 wp-hunter.py --abandoned --min 1000 --sort popular`
+
+### 2. The "Fresh Code" Vector
+Target popular plugins that pushed code in the last 48 hours.
+*   **Logic:** New features = New attack surfaces. Bugs are most likely to exist in code written yesterday.
+*   **Command:** `python3 wp-hunter.py --max-days 2 --min 10000 --sort updated`
+
+### 3. The "Complexity" Trap
+Target complex functionality (File Uploads, Payments) in mid-range plugins.
+*   **Logic:** Handling files and money is difficult. Indie developers often make mistakes in logic flows here.
+*   **Command:** `python3 wp-hunter.py --smart --min 500 --max 10000`
+
+## Professional VPS Logic (Vulnerability Probability Score)
+
+The score (0-100) is calculated based on the likelihood of **unpatched** or **unknown** (0-day) vulnerabilities:
+
+| Metric | Condition | Impact | Reasoning |
+|--------|-----------|--------|-----------|
+| **Code Rot** | > 2 Years Old | **+40 pts** | Abandoned code is critical risk. Libraries expire, WP API changes. |
+| **Code Rot** | > 1 Year Old | **+25 pts** | Highly neglected. |
+| **Attack Surface** | Risky Tags | **+30 pts** | Payment, Upload, SQL, Forms have inherently higher complexity/risk. |
+| **Neglect** | Support < 20% | **+15 pts** | If dev ignores users, they likely ignore security reports. |
+| **Tech Debt** | Outdated WP | **+15 pts** | Not tested with latest core version. |
+| **Reputation** | Rating < 3.5 | **+10 pts** | Signal of poor user experience/code quality. |
+| **Maintenance** | Update < 14 days | **-5 pts** | **Reward:** Active developer is present and watching. |
+
+*Note: The presence of "Security Fixes" in changelogs is flagged visually for N-day analysis but does **NOT** increase the VPS score. We reward patching, not punish it.*
 
 ## Risk Categories
 
@@ -119,9 +162,9 @@ The tool identifies plugins in sensitive functional areas where vulnerabilities 
 
 ## Score Interpretation
 
-- **CRITICAL (80-100)**: Very high probability of relevance; manual audit highly recommended.
-- **HIGH (50-79)**: Significant risk indicators; worth further investigation.
-- **LOW (0-49)**: Lower probability of immediate interest; routine monitoring.
+- **CRITICAL (80-100)**: **Abandoned & Complex.** High chance of structural vulnerabilities.
+- **HIGH (50-79)**: **Neglected.** Likely contains outdated code or unresolved issues.
+- **LOW (0-49)**: **Maintained.** Routine risk, generally safe unless a specific 0-day exists.
 
 ## Legal Disclaimer
 
