@@ -735,7 +735,7 @@ def save_results(results: List[Dict[str, Any]], filename: str, format_type: str)
         print(f"{Colors.RED}[!] Error saving results: {e}{Colors.RESET}")
 
 def download_top_plugins(results: List[Dict[str, Any]], download_limit: int, base_dir: str = ".") -> None:
-    """Downloads top N plugins sorted by VPS score to ./Plugins/ directory."""
+    """Downloads and extracts top N plugins sorted by VPS score to ./Plugins/ directory."""
     if not results:
         print(f"{Colors.YELLOW}[!] No results to download.{Colors.RESET}")
         return
@@ -762,28 +762,48 @@ def download_top_plugins(results: List[Dict[str, Any]], download_limit: int, bas
             print(f"{Colors.YELLOW}[{idx}] Skipping {slug} - No download link available{Colors.RESET}")
             continue
 
-        filename = f"{slug}.{version}.zip"
-        filepath = os.path.join(plugins_dir, filename)
+        zip_filename = f"{slug}.{version}.zip"
+        zip_filepath = os.path.join(plugins_dir, zip_filename)
+        extract_dir = os.path.join(plugins_dir, slug)
 
         try:
             print(f"{Colors.CYAN}[{idx}] Downloading: {slug} (v{version}) - VPS Score: {score}{Colors.RESET}")
             response = session.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
 
-            with open(filepath, 'wb') as f:
+            with open(zip_filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
-            file_size = os.path.getsize(filepath) / 1024  # KB
-            print(f"{Colors.GREEN}    ✓ Saved: {filename} ({file_size:.1f} KB){Colors.RESET}")
+            file_size = os.path.getsize(zip_filepath) / 1024  # KB
+            print(f"{Colors.GREEN}    ✓ Downloaded: {zip_filename} ({file_size:.1f} KB){Colors.RESET}")
+            
+            # Auto-extract ZIP
+            print(f"{Colors.CYAN}    📦 Extracting to {slug}/...{Colors.RESET}")
+            os.makedirs(extract_dir, exist_ok=True)
+            
+            with zipfile.ZipFile(zip_filepath, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            
+            # Remove ZIP file after extraction
+            os.remove(zip_filepath)
+            
+            # Count extracted files
+            file_count = sum(1 for _ in Path(extract_dir).rglob('*') if _.is_file())
+            print(f"{Colors.GREEN}    ✓ Extracted: {file_count} files{Colors.RESET}")
+            
             downloaded_count += 1
 
+        except zipfile.BadZipFile:
+            print(f"{Colors.RED}    ✗ Invalid ZIP file{Colors.RESET}")
+            if os.path.exists(zip_filepath):
+                os.remove(zip_filepath)
         except requests.exceptions.RequestException as e:
-            print(f"{Colors.RED}    ✗ Failed: {e}{Colors.RESET}")
+            print(f"{Colors.RED}    ✗ Download failed: {e}{Colors.RESET}")
         except IOError as e:
             print(f"{Colors.RED}    ✗ File error: {e}{Colors.RESET}")
 
-    print(f"\n{Colors.GREEN}[✓] Download complete: {downloaded_count}/{len(plugins_to_download)} plugins saved to {plugins_dir}{Colors.RESET}")
+    print(f"\n{Colors.GREEN}[✓] Download complete: {downloaded_count}/{len(plugins_to_download)} plugins extracted to {plugins_dir}{Colors.RESET}")
 
 def scan_themes(pages: int = 5, limit: int = 0) -> None:
     """NEW: WordPress Theme Scanner"""
