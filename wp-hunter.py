@@ -6,32 +6,84 @@ from datetime import datetime
 import time
 import json
 import csv
+import zipfile
+import shutil
+import re
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from typing import List, Dict, Any, Tuple, Optional, Set
+from dataclasses import dataclass
+import tempfile
+import subprocess
 
 # --- CONSTANTS ---
 CURRENT_WP_VERSION = 6.7
 MAX_WORKERS = 5
 
 RISKY_TAGS: Set[str] = {
-    'ecommerce', 'woocommerce', 'payment', 'gateway', 'stripe', 
-    'form', 'contact', 'input', 'survey', 
-    'upload', 'file', 'image', 'gallery', 'media', 'download',
-    'login', 'register', 'membership', 'user', 'profile', 'admin', 'role',
-    'booking', 'calendar', 'event', 
-    'chat', 'ticket', 'support', 'comment',
-    'api', 'query', 'database', 'sql', 'db'
+    # E-commerce & Payment
+    'ecommerce', 'woocommerce', 'payment', 'gateway', 'stripe', 'paypal', 'checkout', 'cart', 'shop',
+    
+    # Forms & Input
+    'form', 'contact', 'input', 'survey', 'quiz', 'poll', 'booking', 'reservation',
+    
+    # File Operations
+    'upload', 'file', 'image', 'gallery', 'media', 'download', 'import', 'export', 'backup',
+    
+    # User Management
+    'login', 'register', 'membership', 'user', 'profile', 'admin', 'role', 'authentication',
+    
+    # Communication
+    'chat', 'ticket', 'support', 'comment', 'review', 'rating', 'forum', 'message',
+    
+    # API & Database
+    'api', 'rest', 'endpoint', 'ajax', 'query', 'database', 'sql', 'db', 'webhook',
+    
+    # Events & Booking
+    'calendar', 'event', 'booking', 'appointment', 'schedule',
+    
+    # Security & Auth
+    'oauth', 'token', 'sso', 'ldap', '2fa', 'captcha',
+    
+    # Custom Post Types
+    'custom-post-type', 'cpt', 'meta', 'field', 'acf'
 }
 
 SECURITY_KEYWORDS: Set[str] = {
-    'xss', 'sql', 'injection', 'security', 'vulnerability', 'exploit', 
-    'csrf', 'rce', 'fix', 'patched', 'sanitize', 'escape', 'harden'
+    'xss', 'sql', 'injection', 'security', 'vulnerability', 'exploit', 'csrf', 'rce', 'ssrf',
+    'lfi', 'rfi', 'idor', 'xxe', 'deserialization', 'bypass', 'privilege escalation',
+    'fix', 'patched', 'sanitize', 'escape', 'harden', 'cve-', 'authentication bypass',
+    'authorization', 'nonce', 'validation', 'security update', 'security fix'
 }
 
 FEATURE_KEYWORDS: Set[str] = {
-    'added', 'new', 'feature', 'support for', 'introduced', 
-    'now allows', 'implementation'
+    'added', 'new', 'feature', 'support for', 'introduced', 'now allows', 'implementation',
+    'custom endpoint', 'custom ajax', 'custom api', 'file upload', 'import tool', 'export',
+    'rest api', 'guest access', 'public access', 'allows users', 'direct access',
+    'shortcode', 'widget', 'custom post type'
+}
+
+# New: Dangerous PHP functions to look for in code
+DANGEROUS_FUNCTIONS: Set[str] = {
+    'eval', 'exec', 'system', 'shell_exec', 'passthru', 'popen', 'proc_open',
+    'pcntl_exec', 'assert', 'create_function', 'unserialize', 'file_get_contents',
+    'file_put_contents', 'fopen', 'readfile', 'include', 'require',
+    'include_once', 'require_once', 'call_user_func', 'call_user_func_array'
+}
+
+# AJAX patterns to detect
+AJAX_PATTERNS: Set[str] = {
+    'wp_ajax_', 'admin-ajax.php', 'wp_ajax_nopriv_', 'ajaxurl', 'ajax_action',
+    'wp_localize_script', 'wp_enqueue_script', 'jQuery.post', '$.post', '$.ajax',
+    'XMLHttpRequest', 'fetch(', 'wp.ajax'
+}
+
+# Theme-specific patterns
+THEME_PATTERNS: Set[str] = {
+    'wp_head', 'wp_footer', 'get_header', 'get_footer', 'get_sidebar',
+    'wp_enqueue_style', 'wp_enqueue_script', 'add_theme_support',
+    'register_nav_menus', 'wp_nav_menu', 'dynamic_sidebar'
 }
 
 class Colors:
@@ -46,6 +98,209 @@ class Colors:
     BOLD = '\033[1m'
     ORANGE = '\033[38;5;208m'
     GRAY = '\033[90m'
+
+# ================= NEW CLASSES =================
+
+@dataclass
+class CodeAnalysisResult:
+    """Code analysis result for plugins/themes"""
+    dangerous_functions: List[str]
+    ajax_endpoints: List[str]
+    theme_functions: List[str]
+    file_operations: List[str]
+    sql_queries: List[str]
+    nonce_usage: List[str]
+    sanitization_issues: List[str]
+    
+class ThemeScanner:
+    """WordPress Theme Scanner"""
+    
+    @staticmethod
+    def fetch_themes(page: int = 1, max_retries: int = 3) -> List[Dict[str, Any]]:
+        """Fetch themes from WordPress.org API"""
+        url = 'https://api.wordpress.org/themes/info/1.2/'
+        params = {
+            'action': 'query_themes',
+            'request[browse]': 'popular',
+            'request[page]': page,
+            'request[per_page]': 100,
+            'request[fields][description]': True,
+            'request[fields][downloaded]': True,
+            'request[fields][last_updated]': True,
+            'request[fields][download_link]': True,
+            'request[fields][version]': True,
+            'request[fields][author]': True,
+            'request[fields][tags]': True,
+            'request[fields][screenshot_url]': True
+        }
+        
+        for attempt in range(max_retries):
+            try:
+                response = session.get(url, params=params, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get('themes', []) if data else []
+                elif response.status_code == 429:
+                    wait_time = 5 * (attempt + 1)
+                    print(f"{Colors.YELLOW}[!] Rate limited, waiting {wait_time}s...{Colors.RESET}")
+                    time.sleep(wait_time)
+                    continue
+            except Exception as e:
+                print(f"{Colors.RED}[!] Theme API Error: {e}{Colors.RESET}")
+                time.sleep(2)
+                continue
+        return []
+
+class CodeAnalyzer:
+    """Advanced code analysis for plugins and themes"""
+    
+    @staticmethod
+    def analyze_php_file(file_path: Path) -> CodeAnalysisResult:
+        """Analyze a single PHP file for security issues"""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+        except Exception:
+            return CodeAnalysisResult([], [], [], [], [], [], [])
+        
+        # Find dangerous functions
+        dangerous_found = []
+        for func in DANGEROUS_FUNCTIONS:
+            pattern = rf'\b{func}\s*\('
+            if re.search(pattern, content, re.IGNORECASE):
+                dangerous_found.append(func)
+        
+        # Find AJAX endpoints
+        ajax_found = []
+        for pattern in AJAX_PATTERNS:
+            if pattern in content:
+                ajax_found.append(pattern)
+        
+        # Find theme functions
+        theme_found = []
+        for pattern in THEME_PATTERNS:
+            if pattern in content:
+                theme_found.append(pattern)
+        
+        # Find file operations
+        file_ops = []
+        file_patterns = ['fopen', 'file_get_contents', 'file_put_contents', 'readfile', 'unlink']
+        for pattern in file_patterns:
+            if re.search(rf'\b{pattern}\s*\(', content, re.IGNORECASE):
+                file_ops.append(pattern)
+        
+        # Find SQL queries
+        sql_found = []
+        sql_patterns = ['$wpdb->', 'prepare(', 'get_results', 'get_var', 'query(']
+        for pattern in sql_patterns:
+            if pattern in content:
+                sql_found.append(pattern)
+        
+        # Find nonce usage
+        nonce_found = []
+        nonce_patterns = ['wp_nonce_field', 'wp_verify_nonce', 'wp_create_nonce', 'check_admin_referer']
+        for pattern in nonce_patterns:
+            if pattern in content:
+                nonce_found.append(pattern)
+        
+        # Find sanitization issues (missing sanitization)
+        sanitization_issues = []
+        if '$_GET' in content and 'sanitize_' not in content:
+            sanitization_issues.append('$_GET without sanitization')
+        if '$_POST' in content and 'sanitize_' not in content:
+            sanitization_issues.append('$_POST without sanitization')
+        if '$_REQUEST' in content:
+            sanitization_issues.append('$_REQUEST usage (deprecated)')
+        
+        return CodeAnalysisResult(
+            dangerous_functions=dangerous_found,
+            ajax_endpoints=ajax_found,
+            theme_functions=theme_found,
+            file_operations=file_ops,
+            sql_queries=sql_found,
+            nonce_usage=nonce_found,
+            sanitization_issues=sanitization_issues
+        )
+    
+    @staticmethod
+    def analyze_plugin_code(plugin_path: Path) -> CodeAnalysisResult:
+        """Analyze entire plugin directory"""
+        combined_result = CodeAnalysisResult([], [], [], [], [], [], [])
+        
+        # Analyze all PHP files
+        for php_file in plugin_path.rglob("*.php"):
+            if php_file.is_file():
+                result = CodeAnalyzer.analyze_php_file(php_file)
+                
+                # Combine results
+                combined_result.dangerous_functions.extend(result.dangerous_functions)
+                combined_result.ajax_endpoints.extend(result.ajax_endpoints)
+                combined_result.theme_functions.extend(result.theme_functions)
+                combined_result.file_operations.extend(result.file_operations)
+                combined_result.sql_queries.extend(result.sql_queries)
+                combined_result.nonce_usage.extend(result.nonce_usage)
+                combined_result.sanitization_issues.extend(result.sanitization_issues)
+        
+        # Remove duplicates
+        combined_result.dangerous_functions = list(set(combined_result.dangerous_functions))
+        combined_result.ajax_endpoints = list(set(combined_result.ajax_endpoints))
+        combined_result.theme_functions = list(set(combined_result.theme_functions))
+        combined_result.file_operations = list(set(combined_result.file_operations))
+        combined_result.sql_queries = list(set(combined_result.sql_queries))
+        combined_result.nonce_usage = list(set(combined_result.nonce_usage))
+        combined_result.sanitization_issues = list(set(combined_result.sanitization_issues))
+        
+        return combined_result
+
+class PluginDownloader:
+    """Plugin downloader and extractor"""
+    
+    @staticmethod
+    def download_and_extract(download_url: str, slug: str, base_dir: str = ".") -> Optional[Path]:
+        """Download and extract plugin"""
+        plugins_dir = Path(base_dir) / "Downloaded_Plugins"
+        plugins_dir.mkdir(exist_ok=True)
+        
+        plugin_dir = plugins_dir / slug
+        zip_path = plugin_dir / f"{slug}.zip"
+        extract_path = plugin_dir / "source"
+        
+        try:
+            plugin_dir.mkdir(exist_ok=True)
+            
+            # Download
+            print(f"{Colors.CYAN}[⬇] Downloading {slug}...{Colors.RESET}")
+            response = session.get(download_url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            # Extract
+            print(f"{Colors.CYAN}[📦] Extracting {slug}...{Colors.RESET}")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+            
+            # Clean up zip
+            zip_path.unlink()
+            
+            # Normalize directory structure
+            children = list(extract_path.iterdir())
+            if len(children) == 1 and children[0].is_dir():
+                # Move contents up one level
+                temp_dir = extract_path.parent / "temp"
+                children[0].rename(temp_dir)
+                shutil.rmtree(extract_path)
+                temp_dir.rename(extract_path)
+            
+            return extract_path
+            
+        except Exception as e:
+            print(f"{Colors.RED}[!] Failed to download {slug}: {e}{Colors.RESET}")
+            if plugin_dir.exists():
+                shutil.rmtree(plugin_dir, ignore_errors=True)
+            return None
 
 # Thread-safe lock for console output
 print_lock = threading.Lock()
@@ -87,26 +342,26 @@ def calculate_vps_score(
     support_rate: int, 
     tested_ver: str, 
     sec_flags: List[str], 
-    feat_flags: List[str]
+    feat_flags: List[str],
+    code_analysis: Optional[CodeAnalysisResult] = None
 ) -> int:
     """
-    Calculates the Vulnerability Probability Score (VPS) based on 'Neglect & Surface' model.
+    Enhanced VPS calculation with code analysis integration.
     High Score = High Probability of Unknown Vulnerabilities (0-day) or Unpatched Code.
     """
     score = 0
     
     # 1. CODE ROT (Maintenance Latency) - Max 40 pts
-    # The longer code sits untouched, the more likely new attack vectors work against it.
     if days_ago > 730: score += 40      # Abandoned (> 2 years) - Critical Risk
     elif days_ago > 365: score += 25    # Neglected (> 1 year)
     elif days_ago > 180: score += 15    # Stale (> 6 months)
     
     # 2. ATTACK SURFACE (Intrinsic Risk) - Max 30 pts
-    # Plugins handling money, files, or user input have a larger attack surface.
-    if matched_tags: score += 30
+    if matched_tags: 
+        surface_score = min(30, len(matched_tags) * 3)
+        score += surface_score
 
     # 3. DEVELOPER NEGLECT (Support Health) - Max 15 pts
-    # If the dev ignores users, they likely ignore security reports too.
     if support_rate < 20: score += 15
     elif support_rate < 50: score += 10
     
@@ -115,19 +370,36 @@ def calculate_vps_score(
         if float(tested_ver) < CURRENT_WP_VERSION - 0.5: 
             score += 15
     except (ValueError, TypeError): 
-        pass
+        score += 10  # Unknown compatibility is risky
         
     # 5. REPUTATION (Quality Signal) - Max 10 pts
     rating = plugin.get('rating', 0) / 20  # Convert 100 scale to 5
     if rating < 3.5: score += 10
     
+    # 6. NEW: CODE ANALYSIS BONUS - Max 25 pts
+    if code_analysis:
+        # Dangerous functions found
+        if code_analysis.dangerous_functions:
+            score += min(15, len(code_analysis.dangerous_functions) * 3)
+        
+        # Missing security measures
+        if code_analysis.sanitization_issues:
+            score += min(10, len(code_analysis.sanitization_issues) * 2)
+        
+        # AJAX without proper nonce checking
+        if code_analysis.ajax_endpoints and not code_analysis.nonce_usage:
+            score += 8
+        
+        # File operations without proper validation
+        if code_analysis.file_operations:
+            score += min(5, len(code_analysis.file_operations))
+    
     # BONUS: Active Maintenance Reward
-    # If updated recently, the dev is present. We reduce risk slightly.
     if days_ago < 14: score = max(0, score - 5)
     
-    # Note: We do NOT add points for "Security Fixes" (sec_flags). 
-    # A recent security fix implies the dev is patching holes. 
-    # We display the flag for N-day analysis, but it doesn't increase "0-day probability".
+    # BONUS: Good security practices
+    if code_analysis and code_analysis.nonce_usage:
+        score = max(0, score - 3)  # Reward for using nonces
 
     return min(score, 100)
 
@@ -280,7 +552,25 @@ def display_plugin_console(idx: int, plugin: Dict[str, Any], analysis: Dict[str,
         print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.YELLOW}{Colors.BOLD}★ NEW FEATURE: {', '.join(a['feat_flags']).upper()}{Colors.RESET}")
 
     if a['matched_tags']:
-            print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.BOLD}Risk Areas:{Colors.RESET} {Colors.ORANGE}{', '.join(list(set(a['matched_tags']))[:5]).upper()}{Colors.RESET}")
+        print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.BOLD}Risk Areas:{Colors.RESET} {Colors.ORANGE}{', '.join(list(set(a['matched_tags']))[:5]).upper()}{Colors.RESET}")
+
+    # NEW: Code Analysis Results
+    if 'code_analysis' in a and a['code_analysis']:
+        ca = a['code_analysis']
+        print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.GRAY}--- Code Analysis ---{Colors.RESET}")
+        
+        if ca.dangerous_functions:
+            print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.RED}🚨 Dangerous Functions: {', '.join(ca.dangerous_functions[:3])}{Colors.RESET}")
+        
+        if ca.ajax_endpoints:
+            nonce_status = "✓ Protected" if ca.nonce_usage else "⚠ Unprotected"
+            print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.YELLOW}🔗 AJAX Endpoints: {len(ca.ajax_endpoints)} ({nonce_status}){Colors.RESET}")
+        
+        if ca.sanitization_issues:
+            print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.RED}🔓 Sanitization Issues: {len(ca.sanitization_issues)}{Colors.RESET}")
+        
+        if ca.file_operations:
+            print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.ORANGE}📁 File Operations: {len(ca.file_operations)}{Colors.RESET}")
 
     print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.MAGENTA}[Trac Diff]:{Colors.RESET} https://plugins.trac.wordpress.org/log/{p.get('slug')}/")
     print(f"{Colors.CYAN}│{Colors.RESET}   {Colors.BLUE}[Download]:{Colors.RESET}  {p.get('download_link')}")
@@ -341,12 +631,23 @@ def process_page_task(
         
         sec_flags, feat_flags = analyze_changelog(p.get('sections', {}))
         tested_ver = p.get('tested', '?')
-        vps_score = calculate_vps_score(p, days_ago, matched_tags, res_rate, p.get('tested', '0'), sec_flags, feat_flags)
+        slug = p.get('slug')  # Moved here to fix NameError bug
+        
+        # NEW: Code Analysis Integration
+        code_analysis = None
+        if hasattr(args, 'deep_analysis') and args.deep_analysis:
+            # Download and analyze plugin code
+            download_url = p.get('download_link')
+            if download_url:
+                plugin_path = PluginDownloader.download_and_extract(download_url, slug)
+                if plugin_path:
+                    code_analysis = CodeAnalyzer.analyze_plugin_code(plugin_path)
+                    print(f"{Colors.GREEN}[✓] Code analysis completed for {slug}{Colors.RESET}")
+        
+        vps_score = calculate_vps_score(p, days_ago, matched_tags, res_rate, p.get('tested', '0'), sec_flags, feat_flags, code_analysis)
         
         author_raw = p.get('author', 'Unknown')
         is_trusted = 'automattic' in author_raw.lower() or 'wordpress.org' in author_raw.lower()
-        
-        slug = p.get('slug')
         
         # Link Generation
         links = {
@@ -371,7 +672,8 @@ def process_page_task(
             'sec_flags': sec_flags,
             'feat_flags': feat_flags,
             'matched_tags': matched_tags,
-            'links': links
+            'links': links,
+            'code_analysis': code_analysis  # NEW: Add code analysis results
         }
 
         # --- OUTPUT & COLLECTION ---
@@ -483,6 +785,72 @@ def download_top_plugins(results: List[Dict[str, Any]], download_limit: int, bas
 
     print(f"\n{Colors.GREEN}[✓] Download complete: {downloaded_count}/{len(plugins_to_download)} plugins saved to {plugins_dir}{Colors.RESET}")
 
+def scan_themes(pages: int = 5, limit: int = 0) -> None:
+    """NEW: WordPress Theme Scanner"""
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}=== WordPress Theme Scanner ==={Colors.RESET}")
+    print(f"Scanning {pages} pages of themes...\n")
+    
+    found_count = 0
+    
+    for page in range(1, pages + 1):
+        if limit > 0 and found_count >= limit:
+            break
+            
+        print(f"{Colors.CYAN}[Page {page}] Fetching themes...{Colors.RESET}")
+        themes = ThemeScanner.fetch_themes(page)
+        
+        if not themes:
+            print(f"{Colors.YELLOW}[!] No themes found on page {page}{Colors.RESET}")
+            break
+        
+        for theme in themes:
+            if limit > 0 and found_count >= limit:
+                break
+                
+            found_count += 1
+            
+            # Basic theme analysis
+            name = theme.get('name', 'Unknown')
+            version = theme.get('version', '?')
+            downloads = theme.get('downloaded', 0)
+            last_updated = theme.get('last_updated', '')
+            author = theme.get('author', 'Unknown')
+            
+            days_ago = calculate_days_ago(last_updated)
+            
+            # Check for risky patterns in theme
+            theme_tags = list(theme.get('tags', {}).keys())
+            desc = theme.get('description', '').lower()
+            matched_tags = [tag for tag in RISKY_TAGS if tag in theme_tags or tag in desc]
+            
+            # Simple risk assessment for themes
+            risk_score = 0
+            if days_ago > 730: risk_score += 30
+            elif days_ago > 365: risk_score += 20
+            if matched_tags: risk_score += 15
+            if downloads < 1000: risk_score += 10
+            
+            risk_level = "HIGH" if risk_score >= 40 else ("MEDIUM" if risk_score >= 20 else "LOW")
+            risk_color = Colors.RED if risk_score >= 40 else (Colors.ORANGE if risk_score >= 20 else Colors.GREEN)
+            
+            print(f"{Colors.BOLD}{Colors.MAGENTA}┌── [{found_count}] {name} {Colors.RESET}(v{version})")
+            print(f"{Colors.MAGENTA}│{Colors.RESET}   {Colors.BOLD}Risk:{Colors.RESET} {risk_color}{risk_level} ({risk_score}){Colors.RESET}")
+            print(f"{Colors.MAGENTA}│{Colors.RESET}   {Colors.BOLD}Downloads:{Colors.RESET} {downloads:,} | {Colors.BOLD}Updated:{Colors.RESET} {days_ago} days ago")
+            print(f"{Colors.MAGENTA}│{Colors.RESET}   {Colors.BOLD}Author:{Colors.RESET} {author}")
+            
+            if matched_tags:
+                print(f"{Colors.MAGENTA}│{Colors.RESET}   {Colors.BOLD}Risk Areas:{Colors.RESET} {Colors.ORANGE}{', '.join(matched_tags[:3]).upper()}{Colors.RESET}")
+            
+            download_link = theme.get('download_link', '')
+            if download_link:
+                print(f"{Colors.MAGENTA}│{Colors.RESET}   {Colors.BLUE}[Download]:{Colors.RESET} {download_link}")
+            
+            print(f"{Colors.MAGENTA}└──{Colors.RESET}\n")
+        
+        time.sleep(0.5)  # Rate limiting
+    
+    print(f"{Colors.GREEN}[✓] Theme scan complete: {found_count} themes analyzed{Colors.RESET}")
+
 def print_banner() -> None:
     banner = f"""{Colors.BOLD}{Colors.CYAN}
 ██╗    ██╗██████╗       ██╗  ██╗██╗   ██╗███╗   ██╗████████╗███████╗██████╗ 
@@ -492,7 +860,7 @@ def print_banner() -> None:
 ╚███╔███╔╝██║           ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
  ╚══╝╚══╝ ╚═╝           ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
 
-                         WordPress Plugin Reconnaissance Tool                 
+                       WordPress Plugin Reconnaissance Tool                 
 
 {Colors.RESET}{Colors.YELLOW}Author: Ali Sünbül (xeloxa)
 Email:  alisunbul@proton.me
@@ -501,7 +869,9 @@ Repo:   https://github.com/xeloxa/wp-hunter{Colors.RESET}
     print(banner)
 
 def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='WP Hunter')
+    parser = argparse.ArgumentParser(description='WP Hunter - WordPress Plugin & Theme Security Scanner')
+    
+    # Basic scanning options
     parser.add_argument('--pages', type=int, default=5, help='Maximum number of pages to scan (Default: 5)')
     parser.add_argument('--limit', type=int, default=0, help='Maximum number of targets to list (0 = Unlimited)')
     parser.add_argument('--min', type=int, default=1000, help='Minimum active installations')
@@ -509,16 +879,33 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--sort', type=str, default='updated', choices=['new', 'updated', 'popular'])
     parser.add_argument('--smart', action='store_true', help='Show only risky categories')
     parser.add_argument('--abandoned', action='store_true', help='Show only plugins not updated for > 2 years')
+    
+    # Output options
     parser.add_argument('--output', type=str, help='Output file name (e.g., results.json)')
     parser.add_argument('--format', type=str, default='json', choices=['json', 'csv', 'html'], help='Output format')
     parser.add_argument('--download', type=int, default=0, metavar='N', help='Download top N plugins (sorted by VPS score) to ./Plugins/')
+    
+    # Time filtering
     parser.add_argument('--min-days', type=int, default=0, help='Minimum days since last update')
     parser.add_argument('--max-days', type=int, default=0, help='Maximum days since last update')
+    
+    # NEW: Enhanced features
+    parser.add_argument('--deep-analysis', action='store_true', help='Download and analyze plugin code (slower but more accurate)')
+    parser.add_argument('--themes', action='store_true', help='Scan WordPress themes instead of plugins')
+    parser.add_argument('--ajax-scan', action='store_true', help='Focus on plugins with AJAX functionality')
+    parser.add_argument('--dangerous-functions', action='store_true', help='Look for plugins using dangerous PHP functions')
+    parser.add_argument('--auto-download-risky', type=int, default=0, metavar='N', help='Auto-download top N riskiest plugins for analysis')
+    
     return parser.parse_args()
 
 def main() -> None:
     print_banner()
     args = get_args()
+    
+    # NEW: Theme scanning mode
+    if args.themes:
+        scan_themes(args.pages, args.limit)
+        return
 
     # Override defaults for Abandoned Mode to be effective
     if args.abandoned:
@@ -543,8 +930,13 @@ def main() -> None:
     limit_msg = f"{args.limit} items" if args.limit > 0 else "Unlimited"
     print(f"Target Limit: {Colors.YELLOW}{limit_msg}{Colors.RESET}")
 
+    # NEW: Enhanced mode indicators
     if args.smart: print(f"{Colors.RED}[!] Smart Filter: ON{Colors.RESET}")
     if args.abandoned: print(f"{Colors.RED}[!] Abandoned Filter: ON (>730 days){Colors.RESET}")
+    if args.deep_analysis: print(f"{Colors.CYAN}[!] Deep Code Analysis: ON (slower but more accurate){Colors.RESET}")
+    if args.ajax_scan: print(f"{Colors.YELLOW}[!] AJAX Focus: ON{Colors.RESET}")
+    if args.dangerous_functions: print(f"{Colors.RED}[!] Dangerous Functions Detection: ON{Colors.RESET}")
+    
     if args.min_days > 0 or args.max_days > 0:
         d_min = args.min_days
         d_max = args.max_days if args.max_days > 0 else "∞"
@@ -582,8 +974,26 @@ def main() -> None:
     # Download top plugins if requested
     if args.download > 0 and collected_results:
         download_top_plugins(collected_results, args.download)
+    
+    # NEW: Auto-download riskiest plugins
+    if args.auto_download_risky > 0 and collected_results:
+        print(f"\n{Colors.BOLD}{Colors.RED}=== Auto-Downloading Riskiest Plugins ==={Colors.RESET}")
+        risky_plugins = sorted(collected_results, key=lambda x: x.get('score', 0), reverse=True)
+        download_top_plugins(risky_plugins[:args.auto_download_risky], args.auto_download_risky)
 
-    print(f"\n{Colors.GREEN}[✓] Task Completed. Total {found_count_ref[0]} targets listed.{Colors.RESET}")
+    print(f"\n{Colors.GREEN}[✓] Scan completed. Total {found_count_ref[0]} targets analyzed.{Colors.RESET}")
+    
+    # NEW: Summary statistics
+    if collected_results:
+        high_risk = sum(1 for r in collected_results if r.get('score', 0) >= 50)
+        abandoned = sum(1 for r in collected_results if r.get('days_since_update', 0) > 730)
+        risky_categories = sum(1 for r in collected_results if r.get('is_risky_category', False))
+        
+        print(f"\n{Colors.BOLD}{Colors.CYAN}=== Scan Summary ==={Colors.RESET}")
+        print(f"High Risk Plugins: {Colors.RED}{high_risk}{Colors.RESET}")
+        print(f"Abandoned Plugins: {Colors.YELLOW}{abandoned}{Colors.RESET}")
+        print(f"Risky Categories: {Colors.ORANGE}{risky_categories}{Colors.RESET}")
+        print(f"Total Analyzed: {Colors.GREEN}{len(collected_results)}{Colors.RESET}")
 
 def cleanup_session() -> None:
     session.close()
