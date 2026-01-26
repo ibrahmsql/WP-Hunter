@@ -13,6 +13,10 @@ WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST
 > [!IMPORTANT]
 > This is an **exploration tool**. It does not guarantee the existence of a vulnerability; instead, it provides a "Vulnerability Probability Score" (VPS) based on heuristics to help researchers prioritize their findings.
 
+## 🌐 Web Interface (Command Builder)
+
+Access the **[WP-Hunter Command Builder](https://xeloxa.github.io/WP-Hunter/)** to visually configure your scans and generate the perfect CLI command.
+
 ## Demo
 
 <div align="center">
@@ -26,16 +30,6 @@ WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST
 </div>
 
 *Deep analysis showing security risk scoring, dangerous functions, and vulnerability intelligence*
-
-## 🌐 Web Interface (Command Builder)
-
-Access the **[WP-Hunter Command Builder](https://xeloxa.github.io/WP-Hunter/)** to visually configure your scans and generate the perfect CLI command.
-
-<div align="center">
-  <a href="https://xeloxa.github.io/WP-Hunter/">
-    <img src="https://img.shields.io/badge/Launch-Web_Interface-00ff9d?style=for-the-badge&logo=github" alt="Launch Web Interface">
-  </a>
-</div>
 
 ## Report Example
 
