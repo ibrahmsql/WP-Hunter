@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey" alt="Platform">
 </p>
 
-WP-Hunter is a **WordPress plugin reconnaissance and reconnaissance tool**. It is designed for **security exploration** and evaluates the **probability** of potential vulnerabilities or outdated plugins by analyzing metadata, installation patterns, and update histories from the WordPress plugin repository.
+WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST) tool**. It is designed for **security exploration** and evaluates the **probability** of potential vulnerabilities or outdated plugins by analyzing metadata, installation patterns, update histories, and **source code** from the WordPress repository.
 
 > [!IMPORTANT]
 > This is an **exploration tool**. It does not guarantee the existence of a vulnerability; instead, it provides a "Vulnerability Probability Score" (VPS) based on heuristics to help researchers prioritize their findings.
@@ -77,6 +77,13 @@ python3 wp-hunter.py
 - `--format`: Output format (choices: `json`, `csv`, `html`, default: `json`)
 - `--download N`: Automatically download top N plugins (sorted by VPS score) to `./Plugins/`
 
+### New: Static Analysis & Advanced Options
+- `--themes`: Scan WordPress themes instead of plugins
+- `--deep-analysis`: Enable static code analysis (SAST) to find dangerous functions and security flaws (Downloads plugins)
+- `--ajax-scan`: Focus on plugins/themes with AJAX endpoints
+- `--dangerous-functions`: Scan for dangerous PHP functions like `eval()`, `exec()`, etc.
+- `--auto-download-risky N`: Automatically download and analyze the top N riskiest targets
+
 ### Understanding Page Logic (`--pages`)
 
 The tool fetches data in "pages" from the WordPress API, where **1 page = 100 plugins**.
@@ -116,6 +123,18 @@ Download the top 5 highest-scoring plugins for manual code review:
 python3 wp-hunter.py --smart --download 5
 ```
 
+**6. Deep Code Analysis (SAST)**
+Download and analyze plugins for dangerous functions and insecure AJAX endpoints:
+```bash
+python3 wp-hunter.py --deep-analysis --limit 10
+```
+
+**7. Theme Security Scanning**
+Scan popular themes for security risks:
+```bash
+python3 wp-hunter.py --themes --pages 2
+```
+
 ## 🎯 Hunter Strategies (Tips for Researchers)
 
 If you are looking for CVEs or bug bounties, try these specific workflows:
@@ -145,6 +164,7 @@ The score (0-100) is calculated based on the likelihood of **unpatched** or **un
 | **Code Rot** | > 1 Year Old | **+25 pts** | Highly neglected. |
 | **Attack Surface** | Risky Tags | **+30 pts** | Payment, Upload, SQL, Forms have inherently higher complexity/risk. |
 | **Neglect** | Support < 20% | **+15 pts** | If dev ignores users, they likely ignore security reports. |
+| **Code Analysis** | Dangerous Funcs / Unprotected AJAX | **+5 to +25 pts** | Presence of eval/exec or AJAX without nonces increases risk significantly. |
 | **Tech Debt** | Outdated WP | **+15 pts** | Not tested with latest core version. |
 | **Reputation** | Rating < 3.5 | **+10 pts** | Signal of poor user experience/code quality. |
 | **Maintenance** | Update < 14 days | **-5 pts** | **Reward:** Active developer is present and watching. |
