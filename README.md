@@ -21,6 +21,12 @@ WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST
 
 *WP-Hunter tool in action, showing plugin reconnaissance and probability scoring*
 
+<div align="center">
+  <img src="demo_analysis.png" alt="WP-Hunter Deep Analysis" width="800"/>
+</div>
+
+*Deep analysis showing security risk scoring, dangerous functions, and vulnerability intelligence*
+
 ## Report Example
 
 <div align="center">
