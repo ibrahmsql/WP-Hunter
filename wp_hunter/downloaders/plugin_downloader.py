@@ -1,0 +1,146 @@
+"""
+WP-Hunter Plugin Downloader
+
+Download and extract plugins for analysis.
+"""
+
+import os
+import zipfile
+import shutil
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from wp_hunter.config import Colors
+from wp_hunter.scanners.plugin_scanner import get_session
+
+
+class PluginDownloader:
+    """Plugin downloader and extractor."""
+    
+    def __init__(self, base_dir: str = "."):
+        self.base_dir = Path(base_dir)
+        self.plugins_dir = self.base_dir / "Plugins"
+        self.plugins_dir.mkdir(exist_ok=True)
+    
+    def download_and_extract(
+        self, 
+        download_url: str, 
+        slug: str,
+        verbose: bool = True
+    ) -> Optional[Path]:
+        """Download and extract a plugin, returning the path to extracted files."""
+        session = get_session()
+        
+        plugin_dir = self.plugins_dir / slug
+        zip_path = plugin_dir / f"{slug}.zip"
+        extract_path = plugin_dir / "source"
+        
+        try:
+            plugin_dir.mkdir(exist_ok=True)
+            
+            # Download
+            if verbose:
+                print(f"{Colors.CYAN}[⬇] Downloading {slug}...{Colors.RESET}")
+            response = session.get(download_url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            # Extract
+            if verbose:
+                print(f"{Colors.CYAN}[📦] Extracting {slug}...{Colors.RESET}")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+            
+            # Clean up zip
+            zip_path.unlink()
+            
+            # Normalize directory structure
+            children = list(extract_path.iterdir())
+            if len(children) == 1 and children[0].is_dir():
+                # Move contents up one level
+                temp_dir = extract_path.parent / "temp"
+                children[0].rename(temp_dir)
+                shutil.rmtree(extract_path)
+                temp_dir.rename(extract_path)
+            
+            if verbose:
+                file_count = sum(1 for _ in extract_path.rglob('*') if _.is_file())
+                print(f"{Colors.GREEN}[✓] Extracted {slug}: {file_count} files{Colors.RESET}")
+            
+            return extract_path
+            
+        except zipfile.BadZipFile:
+            if verbose:
+                print(f"{Colors.RED}[!] Invalid ZIP file for {slug}{Colors.RESET}")
+            if zip_path.exists():
+                zip_path.unlink()
+            return None
+        except Exception as e:
+            if verbose:
+                print(f"{Colors.RED}[!] Failed to download {slug}: {e}{Colors.RESET}")
+            if plugin_dir.exists():
+                shutil.rmtree(plugin_dir, ignore_errors=True)
+            return None
+    
+    def download_top_plugins(
+        self, 
+        results: List[Dict[str, Any]], 
+        download_limit: int,
+        verbose: bool = True
+    ) -> int:
+        """Downloads and extracts top N plugins sorted by VPS score."""
+        if not results:
+            if verbose:
+                print(f"{Colors.YELLOW}[!] No results to download.{Colors.RESET}")
+            return 0
+        
+        # Sort by score (highest first)
+        sorted_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+        plugins_to_download = sorted_results[:download_limit]
+        
+        if verbose:
+            print(f"\n{Colors.BOLD}{Colors.CYAN}=== Downloading Top {len(plugins_to_download)} High-Score Plugins ==={Colors.RESET}")
+            print(f"Download directory: {self.plugins_dir.absolute()}\n")
+        
+        downloaded_count = 0
+        for idx, plugin in enumerate(plugins_to_download, 1):
+            slug = plugin.get('slug', 'unknown')
+            version = plugin.get('version', 'latest')
+            score = plugin.get('score', 0)
+            download_url = plugin.get('download_link')
+            
+            if not download_url:
+                if verbose:
+                    print(f"{Colors.YELLOW}[{idx}] Skipping {slug} - No download link available{Colors.RESET}")
+                continue
+            
+            if verbose:
+                print(f"{Colors.CYAN}[{idx}] Downloading: {slug} (v{version}) - VPS Score: {score}{Colors.RESET}")
+            
+            result = self.download_and_extract(download_url, slug, verbose=False)
+            if result:
+                downloaded_count += 1
+                if verbose:
+                    file_count = sum(1 for _ in result.rglob('*') if _.is_file())
+                    print(f"{Colors.GREEN}    ✓ Downloaded and extracted: {file_count} files{Colors.RESET}")
+        
+        if verbose:
+            print(f"\n{Colors.GREEN}[✓] Download complete: {downloaded_count}/{len(plugins_to_download)} plugins{Colors.RESET}")
+        
+        return downloaded_count
+    
+    def get_downloaded_plugins(self) -> List[str]:
+        """Get list of downloaded plugin slugs."""
+        if not self.plugins_dir.exists():
+            return []
+        return [d.name for d in self.plugins_dir.iterdir() if d.is_dir()]
+    
+    def get_plugin_path(self, slug: str) -> Optional[Path]:
+        """Get the source path for a downloaded plugin."""
+        source_path = self.plugins_dir / slug / "source"
+        if source_path.exists():
+            return source_path
+        return None
