@@ -47,6 +47,7 @@
             border-collapse: collapse;
             font-family: var(--font-mono);
             font-size: 12px;
+            table-layout: fixed;
         }
         .history-table th {
             text-align: left;
@@ -60,6 +61,354 @@
             border-bottom: 1px solid #1a1a1a;
             color: var(--text-main);
         }
+        .history-table th.history-col-id,
+        .history-table td.history-col-id {
+            width: 84px;
+            white-space: nowrap;
+        }
+        .history-table th.history-col-status,
+        .history-table td.history-col-status {
+            width: 154px;
+            padding-right: 8px;
+        }
+        .history-table th.history-col-found,
+        .history-table td.history-col-found {
+            width: 206px;
+            padding-left: 8px;
+            padding-right: 18px;
+        }
+        .history-table th.history-col-risk,
+        .history-table td.history-col-risk {
+            width: 196px;
+            padding-left: 18px;
+        }
+        .history-table th.history-col-date,
+        .history-table td.history-col-date {
+            width: 210px;
+            white-space: nowrap;
+            padding-right: 10px;
+        }
+        .history-table th.history-col-semgrep,
+        .history-table td.history-col-semgrep {
+            width: 184px;
+            padding-left: 4px;
+        }
+        .history-table th.history-col-mode,
+        .history-table td.history-col-mode {
+            width: 98px;
+            white-space: nowrap;
+        }
+        .history-table th.history-col-actions,
+        .history-table td.history-col-actions {
+            width: 138px;
+            white-space: nowrap;
+        }
+        .history-table tbody tr.history-row {
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .history-table tbody tr.history-row:hover,
+        .history-table tbody tr.history-row:focus-within {
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .history-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 0;
+            position: relative;
+            min-height: 24px;
+            padding-right: 30px;
+        }
+        .history-date-stamp {
+            font-variant-numeric: tabular-nums;
+            color: #d8d8d8;
+            letter-spacing: 0.01em;
+        }
+        .history-semgrep-cell {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            max-width: 172px;
+        }
+        .history-semgrep-pill {
+            min-width: 40px;
+            text-align: center;
+            padding: 3px 7px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: rgba(255, 255, 255, 0.03);
+            color: #c6ced7;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+        .history-semgrep-meter {
+            display: block;
+            width: 72px;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.1);
+            overflow: hidden;
+            flex: 0 0 auto;
+        }
+        .history-semgrep-state {
+            font-size: 9px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #7f8893;
+            line-height: 1.2;
+            white-space: nowrap;
+            min-width: 28px;
+            text-align: right;
+        }
+        .history-semgrep-fill {
+            display: block;
+            height: 100%;
+            width: 0;
+            border-radius: inherit;
+            background: rgba(125, 131, 137, 0.8);
+        }
+        .history-semgrep-cell.running .history-semgrep-pill,
+        .history-semgrep-cell.running .history-semgrep-state {
+            color: #8ef6ff;
+        }
+        .history-semgrep-cell.running .history-semgrep-pill {
+            border-color: rgba(0, 243, 255, 0.32);
+            background: rgba(0, 243, 255, 0.1);
+        }
+        .history-semgrep-cell.running .history-semgrep-fill {
+            background: linear-gradient(90deg, rgba(0, 243, 255, 0.6), var(--accent-blue));
+        }
+        .history-semgrep-cell.partial .history-semgrep-pill,
+        .history-semgrep-cell.partial .history-semgrep-state {
+            color: #ffd36b;
+        }
+        .history-semgrep-cell.partial .history-semgrep-pill {
+            border-color: rgba(255, 189, 46, 0.34);
+            background: rgba(255, 189, 46, 0.1);
+        }
+        .history-semgrep-cell.partial .history-semgrep-fill {
+            background: linear-gradient(90deg, rgba(255, 189, 46, 0.6), #ffbd2e);
+        }
+        .history-semgrep-cell.complete .history-semgrep-pill,
+        .history-semgrep-cell.complete .history-semgrep-state {
+            color: #93ffd0;
+        }
+        .history-semgrep-cell.complete .history-semgrep-pill {
+            border-color: rgba(0, 255, 157, 0.32);
+            background: rgba(0, 255, 157, 0.1);
+        }
+        .history-semgrep-cell.complete .history-semgrep-fill {
+            background: linear-gradient(90deg, rgba(0, 255, 157, 0.55), var(--accent-primary));
+        }
+        .history-semgrep-cell.alert .history-semgrep-pill,
+        .history-semgrep-cell.alert .history-semgrep-state {
+            color: #ff8eb7;
+        }
+        .history-semgrep-cell.alert .history-semgrep-pill {
+            border-color: rgba(255, 0, 85, 0.34);
+            background: rgba(255, 0, 85, 0.1);
+        }
+        .history-semgrep-cell.alert .history-semgrep-fill {
+            background: linear-gradient(90deg, rgba(255, 0, 85, 0.7), #ff0055);
+        }
+        .history-semgrep-cell.empty .history-semgrep-pill,
+        .history-semgrep-cell.na .history-semgrep-pill {
+            color: #a5adb7;
+            border-color: rgba(255, 255, 255, 0.16);
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .history-semgrep-cell.empty .history-semgrep-fill,
+        .history-semgrep-cell.na .history-semgrep-fill {
+            background: rgba(120, 126, 132, 0.58);
+        }
+        .history-mode-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-width: 66px;
+            padding: 3px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.03);
+            color: #8f8f8f;
+            font-size: 9px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            line-height: 1;
+        }
+        .history-mode-chip::before {
+            content: '';
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.88;
+        }
+        .history-mode-chip.plugin {
+            border-color: rgba(0, 255, 157, 0.34);
+            color: #9dffd8;
+            background: linear-gradient(180deg, rgba(0, 255, 157, 0.16), rgba(0, 255, 157, 0.05));
+        }
+        .history-mode-chip.theme {
+            border-color: rgba(190, 145, 255, 0.34);
+            color: #d1b5ff;
+            background: linear-gradient(180deg, rgba(161, 117, 255, 0.18), rgba(161, 117, 255, 0.05));
+        }
+        .history-action-open {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 9px;
+            border-radius: 999px;
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            background: rgba(0, 243, 255, 0.08);
+            color: rgba(0, 243, 255, 0.76);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            line-height: 1;
+            transition: all 0.18s ease;
+            pointer-events: none;
+        }
+        .history-action-open svg {
+            width: 11px;
+            height: 11px;
+        }
+        .history-table tbody tr.history-row:hover .history-action-open,
+        .history-table tbody tr.history-row:focus-within .history-action-open {
+            color: var(--accent-blue);
+            border-color: rgba(0, 243, 255, 0.4);
+            background: rgba(0, 243, 255, 0.12);
+        }
+        .history-action-delete {
+            width: 22px;
+            height: 22px;
+            min-width: 0;
+            padding: 0;
+            background: transparent;
+            color: rgba(255, 78, 132, 0.92);
+            border: none;
+            box-shadow: none;
+            position: absolute;
+            right: 0;
+            top: 50%;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translate(6px, -50%);
+            transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease, filter 0.18s ease;
+        }
+        .history-action-delete svg {
+            width: 18px;
+            height: 18px;
+        }
+        .history-action-delete:hover {
+            color: #ff0055;
+            background: transparent;
+            filter: drop-shadow(0 0 7px rgba(255, 0, 85, 0.45));
+        }
+        .history-action-delete:focus-visible {
+            outline: 1px solid rgba(255, 0, 85, 0.45);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+        .history-table tbody tr.history-row:hover .history-action-delete,
+        .history-table tbody tr.history-row:focus-within .history-action-delete {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: translate(0, -50%);
+        }
+        .history-found-cell {
+            display: grid;
+            grid-template-columns: auto auto 1fr;
+            align-items: center;
+            gap: 8px;
+        }
+        .history-found-count {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #fff;
+            min-width: 24px;
+        }
+        .history-found-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #8a8a8a;
+        }
+        .history-found-track {
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            min-width: 70px;
+        }
+        .history-found-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+        }
+        .history-found-fill.high {
+            background: linear-gradient(90deg, rgba(0, 255, 157, 0.55), var(--accent-primary));
+        }
+        .history-found-fill.medium {
+            background: linear-gradient(90deg, rgba(0, 243, 255, 0.45), var(--accent-blue));
+        }
+        .history-found-fill.low {
+            background: rgba(255, 255, 255, 0.35);
+        }
+        .history-risk-cell {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .history-risk-pill {
+            min-width: 26px;
+            text-align: center;
+            padding: 3px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            border: 1px solid transparent;
+        }
+        .history-risk-pill.high {
+            color: #ff0055;
+            background: rgba(255, 0, 85, 0.12);
+            border-color: rgba(255, 0, 85, 0.28);
+        }
+        .history-risk-pill.medium {
+            color: #ffbd2e;
+            background: rgba(255, 189, 46, 0.12);
+            border-color: rgba(255, 189, 46, 0.28);
+        }
+        .history-risk-pill.low {
+            color: var(--accent-blue);
+            background: rgba(0, 243, 255, 0.1);
+            border-color: rgba(0, 243, 255, 0.2);
+        }
+        .history-risk-meter {
+            width: 70px;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+        }
+        .history-risk-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+        }
+        .history-risk-fill.high { background: #ff0055; }
+        .history-risk-fill.medium { background: #ffbd2e; }
+        .history-risk-fill.low { background: var(--accent-blue); }
         .status-badge {
             padding: 4px 8px;
             border-radius: 4px;
@@ -330,6 +679,119 @@
             animation: none;
             background: var(--accent-primary) !important;
         }
+
+        @media (min-width: 1600px) {
+            .nav-item {
+                padding: 12px 14px;
+                gap: 11px;
+                font-size: 14px;
+            }
+
+            .history-table {
+                font-size: 13px;
+            }
+
+            .history-table th,
+            .history-table td {
+                padding-top: 14px;
+                padding-bottom: 14px;
+            }
+
+            .history-table th.history-col-id,
+            .history-table td.history-col-id {
+                width: 92px;
+            }
+
+            .history-table th.history-col-found,
+            .history-table td.history-col-found {
+                width: 220px;
+            }
+
+            .history-table th.history-col-risk,
+            .history-table td.history-col-risk {
+                width: 202px;
+            }
+
+            .history-table th.history-col-date,
+            .history-table td.history-col-date {
+                width: 224px;
+            }
+
+            .history-table th.history-col-semgrep,
+            .history-table td.history-col-semgrep {
+                width: 194px;
+            }
+
+            .history-table th.history-col-mode,
+            .history-table td.history-col-mode {
+                width: 106px;
+            }
+
+            .history-table th.history-col-actions,
+            .history-table td.history-col-actions {
+                width: 142px;
+            }
+
+            .status-badge {
+                font-size: 11px;
+                padding: 5px 10px;
+            }
+
+            .history-found-count {
+                font-size: 15px;
+            }
+
+            .history-found-label {
+                font-size: 10px;
+            }
+
+            .history-found-track,
+            .history-risk-meter {
+                width: 86px;
+                height: 7px;
+            }
+
+            .history-risk-pill {
+                min-width: 30px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+
+            .history-semgrep-cell {
+                max-width: 184px;
+                gap: 8px;
+            }
+
+            .history-semgrep-state {
+                font-size: 10px;
+            }
+
+            .history-semgrep-pill {
+                font-size: 11px;
+                min-width: 44px;
+            }
+
+            .history-semgrep-meter {
+                width: 78px;
+                height: 6px;
+            }
+
+            .history-mode-chip {
+                font-size: 10px;
+                min-width: 72px;
+                padding: 4px 9px;
+            }
+
+            .history-action-open {
+                font-size: 11px;
+                padding: 5px 11px;
+            }
+
+            .history-action-delete {
+                width: 24px;
+                height: 24px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -423,131 +885,189 @@
 
         <!-- Main Configuration Area -->
         <main class="config-area" id="scan-view">
-            
             <form id="configForm" onsubmit="return false;">
-                
-                <!-- Section 1: Scope -->
-                <section class="panel">
-                    <div class="panel-header">
-                        <span class="panel-icon">01</span>
-                        <h2>Scope Definition</h2>
-                    </div>
+                <section class="panel scan-dashboard">
                     <div class="panel-body">
-                        <div class="control-group">
-                            <label>Installations Range <span class="info-icon" data-tooltip="Filter targets based on minimum and maximum active installation counts."></span></label>
-                            <div class="range-inputs">
-                                <div class="input-wrapper">
-                                    <span class="input-label">MIN</span>
-                                    <input type="number" name="min_installs" value="1000" min="0" placeholder="0">
+                        <div class="dashboard-shell">
+                            <div class="dashboard-main">
+                                <div class="dashboard-metrics">
+                                    <article class="metric-card">
+                                        <span class="metric-label">STATUS</span>
+                                        <span class="metric-value info-value" id="scan-status">IDLE</span>
+                                        <p>Current engine state</p>
+                                    </article>
+                                    <article class="metric-card">
+                                        <span class="metric-label">FOUND</span>
+                                        <span class="metric-value info-value" id="scan-found">0</span>
+                                        <p>Targets found in active run</p>
+                                    </article>
+                                    <article class="metric-card">
+                                        <span class="metric-label">TOTAL SCANS</span>
+                                        <span class="metric-value" id="dashboard-total-scans">0</span>
+                                        <p>Stored sessions</p>
+                                    </article>
+                                    <article class="metric-card">
+                                        <span class="metric-label">HIGH RISK</span>
+                                        <span class="metric-value" id="dashboard-high-risk">0</span>
+                                        <p>Findings across sessions</p>
+                                    </article>
                                 </div>
-                                <div class="separator">TO</div>
-                                <div class="input-wrapper">
-                                    <span class="input-label">MAX</span>
-                                    <input type="number" name="max_installs" value="0" min="0" placeholder="Unlimited">
-                                </div>
-                            </div>
-                        </div>
 
-                        <div class="control-group">
-                            <label>Update Timeline (Days) <span class="info-icon" data-tooltip="Find targets last updated within a specific window (e.g., between 30 and 365 days ago)."></span></label>
-                            <div class="range-inputs">
-                                <div class="input-wrapper">
-                                    <span class="input-label">MIN</span>
-                                    <input type="number" name="min_days" value="0" min="0" placeholder="0">
+                                <div class="progress-shell compact-progress">
+                                    <div class="progress-top">
+                                        <h3>Scan Progress</h3>
+                                        <div class="progress-stats">
+                                            <span class="progress-meta" id="scan-stage-text">Idle</span>
+                                            <span class="progress-percent" id="scan-progress-percent">0%</span>
+                                        </div>
+                                    </div>
+                                    <div class="progress-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="scan-progress-track">
+                                        <div class="progress-bar-fill" id="scan-progress-fill"></div>
+                                    </div>
+                                    <p class="progress-note" id="scan-stage-subtext">Ready to start a new scan</p>
+                                    <div class="progress-action-row">
+                                        <button id="scan-progress-details-btn" class="action-btn progress-details-btn" type="button" onclick="openProgressScanDetails()" style="display: none;">
+                                            <span>OPEN SCAN DETAILS</span>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="separator">TO</div>
-                                <div class="input-wrapper">
-                                    <span class="input-label">MAX</span>
-                                    <input type="number" name="max_days" value="0" min="0" placeholder="Unlimited">
-                                </div>
-                            </div>
-                        </div>
 
-                        <div class="control-group">
-                            <label>Search Depth <span class="info-icon" data-tooltip="Configure how many pages of results to scan and the maximum limit."></span></label>
-                            <div class="range-inputs">
-                                <div class="input-wrapper">
-                                    <span class="input-label">PAGES</span>
-                                    <input type="number" name="pages" value="5" min="1" max="50">
+                                <div class="dashboard-charts">
+                                    <article class="chart-card">
+                                        <div class="chart-head">
+                                            <h3>Risk Distribution</h3>
+                                            <span id="dashboard-risk-caption">Click bar to open scan</span>
+                                        </div>
+                                        <div class="bar-chart" id="dashboard-risk-bars"></div>
+                                    </article>
+                                    <article class="chart-card">
+                                        <div class="chart-head">
+                                            <h3>Findings Trend</h3>
+                                            <span id="dashboard-trend-caption">Click bar to open scan</span>
+                                        </div>
+                                        <div class="spark-chart" id="dashboard-trend-bars"></div>
+                                    </article>
                                 </div>
-                                <div class="input-wrapper">
-                                    <span class="input-label">LIMIT</span>
-                                    <input type="number" name="limit" value="0" min="0" placeholder="No Limit">
+
+                                <div class="dashboard-snapshot-grid">
+                                    <article class="side-card recent-inline">
+                                        <div class="side-head">
+                                            <h3>Recent Scans</h3>
+                                            <span id="dashboard-completed-rate">0% completed</span>
+                                        </div>
+                                        <div class="recent-list" id="dashboard-recent-list">
+                                            <div class="recent-empty">No scans yet</div>
+                                        </div>
+                                    </article>
+
+                                    <article class="side-card favorites-inline">
+                                        <div class="side-head">
+                                            <h3>Recent Favorites</h3>
+                                            <span>Last 3 plugins</span>
+                                        </div>
+                                        <div class="recent-list" id="dashboard-favorites-list">
+                                            <div class="recent-empty">No favorites yet</div>
+                                        </div>
+                                    </article>
                                 </div>
+
                             </div>
+
+                            <aside class="dashboard-side">
+                                <article class="side-card">
+                                    <div class="side-head">
+                                        <h3>Quick Setup</h3>
+                                        <div class="quick-head-actions">
+                                            <button id="runBtn" class="action-btn quick-run-btn" onclick="runScan()">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                                </svg>
+                                                <span>RUN SCAN</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="quick-grid">
+                                        <div class="control-group">
+                                            <label>Pages</label>
+                                            <input type="number" name="pages" value="5" min="1" max="50">
+                                        </div>
+                                        <div class="control-group">
+                                            <label>Min Installs</label>
+                                            <input type="number" name="min_installs" value="1000" min="0" placeholder="0">
+                                        </div>
+                                        <div class="control-group">
+                                            <label>Sort</label>
+                                            <div class="select-wrapper">
+                                                <select name="sort">
+                                                    <option value="updated">Last Updated</option>
+                                                    <option value="active_installs">Popularity</option>
+                                                    <option value="new">Newest Added</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="quick-toggles">
+                                        <label class="toggle-card">
+                                            <input type="checkbox" name="smart">
+                                            <div class="toggle-content">
+                                                <span class="toggle-title">Smart Mode</span>
+                                                <span class="toggle-desc">Heuristic analysis</span>
+                                            </div>
+                                            <div class="toggle-switch"></div>
+                                        </label>
+                                        <label class="toggle-card danger">
+                                            <input type="checkbox" name="abandoned">
+                                            <div class="toggle-content">
+                                                <span class="toggle-title">Abandoned</span>
+                                                <span class="toggle-desc">High risk focus</span>
+                                            </div>
+                                            <div class="toggle-switch"></div>
+                                        </label>
+                                    </div>
+
+                                    <div class="advanced-toggle">
+                                        <div class="advanced-title">Advanced Filters</div>
+                                        <div class="advanced-grid">
+                                            <div class="control-group">
+                                                <label>Max Installs</label>
+                                                <input type="number" name="max_installs" value="0" min="0" placeholder="Unlimited">
+                                            </div>
+                                            <div class="control-group">
+                                                <label>Limit</label>
+                                                <input type="number" name="limit" value="0" min="0" placeholder="No Limit">
+                                            </div>
+                                            <div class="control-group">
+                                                <label>Min Days</label>
+                                                <input type="number" name="min_days" value="0" min="0" placeholder="0">
+                                            </div>
+                                            <div class="control-group">
+                                                <label>Max Days</label>
+                                                <input type="number" name="max_days" value="0" min="0" placeholder="Unlimited">
+                                            </div>
+                                            <label class="toggle-card">
+                                                <input type="checkbox" name="themes">
+                                                <div class="toggle-content">
+                                                    <span class="toggle-title">Scan Themes</span>
+                                                    <span class="toggle-desc">Theme repository</span>
+                                                </div>
+                                                <div class="toggle-switch"></div>
+                                            </label>
+                                            <label class="toggle-card">
+                                                <input type="checkbox" name="user_facing">
+                                                <div class="toggle-content">
+                                                    <span class="toggle-title">User Facing</span>
+                                                    <span class="toggle-desc">Input-heavy targets</span>
+                                                </div>
+                                                <div class="toggle-switch"></div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </article>
+                            </aside>
                         </div>
                     </div>
                 </section>
-
-                <!-- Section 2: Filters -->
-                <section class="panel">
-                    <div class="panel-header">
-                        <span class="panel-icon">02</span>
-                        <h2>Target Filters</h2>
-                    </div>
-                    <div class="panel-body grid-2">
-                        <div class="control-group">
-                            <label>Sorting Strategy <span class="info-icon" data-tooltip="Order results by popularity, update date, or newest additions."></span></label>
-                            <div class="select-wrapper">
-                                <select name="sort">
-                                    <option value="updated">Last Updated</option>
-                                    <option value="active_installs">Popularity</option>
-                                    <option value="new">Newest Added</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="control-group">
-                            <label>Target Type <span class="info-icon" data-tooltip="Switch between scanning plugins (default) or themes."></span></label>
-                            <label class="toggle-card">
-                                <input type="checkbox" name="themes">
-                                <div class="toggle-content">
-                                    <span class="toggle-title">Scan Themes</span>
-                                    <span class="toggle-desc">Switch to theme repository</span>
-                                </div>
-                                <div class="toggle-switch"></div>
-                            </label>
-                        </div>
-
-                        <div class="control-group">
-                            <label>Smart Filtering <span class="info-icon" data-tooltip="Use AI heuristics to identify potentially vulnerable targets."></span></label>
-                            <label class="toggle-card">
-                                <input type="checkbox" name="smart">
-                                <div class="toggle-content">
-                                    <span class="toggle-title">Smart Mode</span>
-                                    <span class="toggle-desc">Heuristic analysis enabled</span>
-                                </div>
-                                <div class="toggle-switch"></div>
-                            </label>
-                        </div>
-
-                        <div class="control-group">
-                            <label>Abandoned Software <span class="info-icon" data-tooltip="Specifically target plugins/themes that haven't been updated in over 2 years."></span></label>
-                            <label class="toggle-card danger">
-                                <input type="checkbox" name="abandoned">
-                                <div class="toggle-content">
-                                    <span class="toggle-title">Abandoned Only</span>
-                                    <span class="toggle-desc">High vulnerability probability</span>
-                                </div>
-                                <div class="toggle-switch"></div>
-                            </label>
-                        </div>
-
-                        <div class="control-group">
-                            <label>User Interaction <span class="info-icon" data-tooltip="Filter for plugins that have frontend user input forms."></span></label>
-                            <label class="toggle-card">
-                                <input type="checkbox" name="user_facing">
-                                <div class="toggle-content">
-                                    <span class="toggle-title">User Facing</span>
-                                    <span class="toggle-desc">Has input forms/shortcodes</span>
-                                </div>
-                                <div class="toggle-switch"></div>
-                            </label>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Section 3: Output & Artifacts REMOVED -->
             </form>
         </main>
 
@@ -559,24 +1079,20 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                     </span>
                     <h2>Scan History</h2>
-                    <div class="panel-actions">
-                        <button class="action-btn" onclick="refreshHistory()">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                            REFRESH
-                        </button>
-                    </div>
                 </div>
                 <div class="panel-body">
                     <div class="history-table-container">
                         <table class="history-table">
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>STATUS</th>
-                                    <th>PLUGINS FOUND</th>
-                                    <th>HIGH RISK</th>
-                                    <th>DATE</th>
-                                    <th>ACTIONS</th>
+                                    <th class="history-col-id">ID</th>
+                                    <th class="history-col-status">STATUS</th>
+                                    <th class="history-col-found">PLUGINS FOUND</th>
+                                    <th class="history-col-risk">HIGH RISK</th>
+                                    <th class="history-col-date">DATE</th>
+                                    <th class="history-col-semgrep">SEMGREP</th>
+                                    <th class="history-col-mode">MODE</th>
+                                    <th class="history-col-actions">ACTIONS</th>
                                 </tr>
                             </thead>
                             <tbody id="history-list">
@@ -786,48 +1302,6 @@
             </div>
         </main>
 
-        <!-- Output Console -->
-        <aside class="console-area">
-            <div class="console-sticky">
-                <div class="console-header">
-                    <h3>EXECUTION SEQUENCE</h3>
-                    <div class="console-actions">
-                        <button id="runBtn" class="action-btn run-btn" onclick="runScan()">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                            </svg>
-                            <span>RUN SCAN</span>
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="terminal-window">
-                    <div class="terminal-bar">
-                        <span class="dot red"></span>
-                        <span class="dot yellow"></span>
-                        <span class="dot green"></span>
-                    </div>
-                    <div class="terminal-content" id="terminal-content">
-                        <div class="line">
-                            <span class="prompt">$</span>
-                            <span class="cmd-text">Ready to scan...</span>
-                            <span class="cursor">_</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="context-info" id="contextInfo">
-                    <div class="info-item">
-                        <span class="info-label">STATUS</span>
-                        <span class="info-value" id="scan-status">IDLE</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">FOUND</span>
-                        <span class="info-value" id="scan-found">0</span>
-                    </div>
-                </div>
-            </div>
-        </aside>
     </div>
 
     <!-- Custom Toast/Alert Container -->

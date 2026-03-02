@@ -8,6 +8,9 @@ window.favoriteSlugs = new Set(); // Fast lookup for favorite state
 const SYSTEM_STATUS_POLL_INTERVAL = 15000;
 const SIDEBAR_PREF_KEY = 'wp-hunter-sidebar-collapsed';
 const STAR_STRIP_PREF_KEY = 'wp-hunter-star-strip-hidden';
+const RANDOM_PAGES_MIN = 1;
+const RANDOM_PAGES_MAX = 50;
+const PAGES_FIXED_ATTR = 'data-pages-fixed';
 let systemStatusTimer = null;
 window.systemStatus = null;
 let lastSystemErrorMessage = "";
@@ -114,6 +117,91 @@ function apiNoCacheUrl(path) {
     return `${path}${sep}_ts=${Date.now()}`;
 }
 
+function getPagesInput() {
+    return document.querySelector('#configForm input[name="pages"]');
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function clampPagesValue(value) {
+    if (!Number.isFinite(value)) return randomInt(RANDOM_PAGES_MIN, RANDOM_PAGES_MAX);
+    return Math.max(RANDOM_PAGES_MIN, Math.min(RANDOM_PAGES_MAX, value));
+}
+
+function isPagesFixedByUser() {
+    const input = getPagesInput();
+    return !!input && input.getAttribute(PAGES_FIXED_ATTR) === '1';
+}
+
+function setRandomPagesValue(force = false) {
+    const input = getPagesInput();
+    if (!input) return;
+    if (!force && isPagesFixedByUser()) return;
+    input.value = String(randomInt(RANDOM_PAGES_MIN, RANDOM_PAGES_MAX));
+    if (!isPagesFixedByUser()) {
+        input.setAttribute(PAGES_FIXED_ATTR, '0');
+    }
+}
+
+function initializePagesAutoRandom() {
+    const input = getPagesInput();
+    if (!input) return;
+
+    input.setAttribute(PAGES_FIXED_ATTR, '0');
+    input.min = String(RANDOM_PAGES_MIN);
+    input.max = String(RANDOM_PAGES_MAX);
+
+    const markFixedOrRandom = () => {
+        const raw = String(input.value || '').trim();
+        if (!raw) {
+            input.setAttribute(PAGES_FIXED_ATTR, '0');
+            setRandomPagesValue(true);
+            return;
+        }
+
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+            input.setAttribute(PAGES_FIXED_ATTR, '0');
+            setRandomPagesValue(true);
+            return;
+        }
+
+        const clamped = clampPagesValue(parsed);
+        input.value = String(clamped);
+        input.setAttribute(PAGES_FIXED_ATTR, '1');
+    };
+
+    input.addEventListener('input', () => {
+        const raw = String(input.value || '').trim();
+        if (!raw) {
+            input.setAttribute(PAGES_FIXED_ATTR, '0');
+            return;
+        }
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsed)) {
+            input.setAttribute(PAGES_FIXED_ATTR, '1');
+        }
+    });
+
+    input.addEventListener('blur', markFixedOrRandom);
+
+    setRandomPagesValue(true);
+}
+
+function preparePagesValueBeforeScan() {
+    const input = getPagesInput();
+    if (!input) return randomInt(RANDOM_PAGES_MIN, RANDOM_PAGES_MAX);
+    if (!isPagesFixedByUser()) {
+        setRandomPagesValue(true);
+    }
+    const parsed = Number.parseInt(String(input.value || ''), 10);
+    const clamped = clampPagesValue(parsed);
+    input.value = String(clamped);
+    return clamped;
+}
+
 function refreshAfterScanEvent(sessionId) {
     loadHistory();
     if (!sessionId) return;
@@ -126,7 +214,7 @@ function refreshAfterScanEvent(sessionId) {
 }
 
 async function syncFinalScanResults(sessionId, expectedCount = 0) {
-    if (!sessionId) return;
+    if (!sessionId || !isDetailsViewActive()) return;
     const targetCount = parseInt(expectedCount || 0);
     for (let i = 0; i < 6; i++) {
         if (currentScanId !== sessionId) return;
@@ -449,6 +537,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial setup
     initializeSidebarToggle();
     initializeStarStripDismiss();
+    initializeDashboardChartInteractions();
+    initializePagesAutoRandom();
 
     // Load history
     loadHistory();
@@ -615,6 +705,7 @@ window.switchTab = function(tabId) {
     if (tabId === 'scan') {
         document.getElementById('scan-view').style.display = 'block';
         document.getElementById('nav-scan').classList.add('active');
+        resetDashboardChartCaptions();
     } else if (tabId === 'history') {
         document.getElementById('history-view').style.display = 'block';
         document.getElementById('nav-history').classList.add('active');
@@ -646,10 +737,11 @@ window.switchTab = function(tabId) {
 
 window.runScan = async function() {
     const form = document.getElementById('configForm');
+    const pagesValue = preparePagesValueBeforeScan();
     const formData = new FormData(form);
     
     const requestData = {
-        pages: parseInt(formData.get('pages')) || 5,
+        pages: pagesValue,
         limit: parseInt(formData.get('limit')) || 0,
         min_installs: parseInt(formData.get('min_installs')) || 0,
         max_installs: parseInt(formData.get('max_installs')) || 0,
@@ -670,9 +762,11 @@ window.runScan = async function() {
     const runBtn = document.getElementById('runBtn');
     runBtn.disabled = true;
     runBtn.innerHTML = '<span>STARTING...</span>';
+    setProgressDetailsButton(false);
     
     clearTerminal();
     logTerminal('Initializing scan...', 'info');
+    setScanProgressState(5, 'Starting', 'Submitting scan request');
     
     try {
         const response = await fetch('/api/scans', {
@@ -686,20 +780,23 @@ window.runScan = async function() {
         if (data.session_id) {
             currentScanId = data.session_id;
             logTerminal(`Scan session started: ID ${currentScanId}`, 'success');
+            setScanProgressState(8, 'Starting', `Session #${currentScanId} created`);
             connectWebSocket(currentScanId);
             
             document.getElementById('scan-status').textContent = 'RUNNING';
-            document.getElementById('scan-status').className = 'info-value running';
+            document.getElementById('scan-status').className = 'metric-value info-value running';
             
-            // Navigate to scan details view
-            viewScan(currentScanId);
         } else {
             logTerminal('Failed to start scan', 'error');
+            setScanProgressState(100, 'Failed', 'Scan session could not be started');
+            setProgressDetailsButton(false);
             runBtn.disabled = false;
             runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>RUN SCAN</span>';
         }
     } catch (error) {
         logTerminal(`Error: ${error.message}`, 'error');
+        setScanProgressState(100, 'Failed', error.message || 'Unknown error');
+        setProgressDetailsButton(false);
         runBtn.disabled = false;
         runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>RUN SCAN</span>';
     }
@@ -711,10 +808,18 @@ function connectWebSocket(sessionId) {
     if (socket) socket.close();
     
     socket = new WebSocket(wsUrl);
-    socket.onopen = () => logTerminal('WebSocket connected', 'info');
+    socket.onopen = () => {
+        logTerminal('WebSocket connected', 'info');
+        setScanProgressState(10, 'Running', 'Realtime channel connected');
+    };
     socket.onmessage = (event) => handleMessage(JSON.parse(event.data));
-    socket.onclose = () => logTerminal('WebSocket connection closed', 'info');
-    socket.onerror = () => logTerminal('WebSocket error', 'error');
+    socket.onclose = () => {
+        logTerminal('WebSocket connection closed', 'info');
+    };
+    socket.onerror = () => {
+        logTerminal('WebSocket error', 'error');
+        setScanProgressState(100, 'Failed', 'Realtime channel error');
+    };
 }
 
 function handleMessage(msg) {
@@ -723,29 +828,46 @@ function handleMessage(msg) {
     switch(msg.type) {
         case 'start':
             logTerminal('Scan execution started...', 'info');
+            setScanProgressState(12, 'Running', 'Execution started');
+            setProgressDetailsButton(false);
             break;
+        case 'progress': {
+            const percent = Number(msg.percent || 0);
+            const current = Number(msg.current || 0);
+            const total = Number(msg.total || 0);
+            const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+            const detail = total > 0 ? `Processed ${current}/${total} targets` : `Processed ${current} targets`;
+            setScanProgressState(safePercent, 'Running', detail);
+            break;
+        }
         case 'result':
             logTerminal(`${msg.data.score >= 40 ? '[HIGH RISK]' : '[INFO]'} Found: ${msg.data.slug} (Score: ${msg.data.score})`, msg.data.score >= 40 ? 'high-risk' : 'low-risk');
             document.getElementById('scan-found').textContent = msg.found_count;
+            appendTrendPoint(msg.found_count);
+            setScanProgressState(null, 'Running', `Detected ${msg.found_count} findings`);
             break;
         case 'deduplicated':
             logTerminal(`Scan identical to Session #${msg.original_session_id}. Merging...`, 'warn');
             logTerminal(`Session merged. History updated.`, 'success');
             currentScanId = msg.original_session_id;
             document.getElementById('scan-status').textContent = 'MERGED';
-            document.getElementById('scan-status').className = 'info-value completed';
+            document.getElementById('scan-status').className = 'metric-value info-value completed';
             runBtn.disabled = false;
             runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>RUN SCAN</span>';
+            setScanProgressState(100, 'Merged', `Merged into Session #${msg.original_session_id}`);
+            setProgressDetailsButton(true);
             refreshAfterScanEvent(currentScanId);
             break;
         case 'complete':
             logTerminal(`Scan completed. Found: ${msg.total_found}, High Risk: ${msg.high_risk_count}`, 'success');
             document.getElementById('scan-status').textContent = 'COMPLETED';
-            document.getElementById('scan-status').className = 'info-value completed';
+            document.getElementById('scan-status').className = 'metric-value info-value completed';
             runBtn.disabled = false;
             runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>RUN SCAN</span>';
+            setScanProgressState(100, 'Completed', `Found ${msg.total_found} total / ${msg.high_risk_count} high risk`);
+            setProgressDetailsButton(true);
             refreshAfterScanEvent(currentScanId);
-            if (currentScanId) {
+            if (currentScanId && isDetailsViewActive()) {
                 syncFinalScanResults(currentScanId, msg.total_found);
             }
             // Stop polling when scan completes
@@ -757,9 +879,11 @@ function handleMessage(msg) {
         case 'error':
             logTerminal(`Error: ${msg.message}`, 'error');
             document.getElementById('scan-status').textContent = 'FAILED';
-            document.getElementById('scan-status').className = 'info-value failed';
+            document.getElementById('scan-status').className = 'metric-value info-value failed';
             runBtn.disabled = false;
             runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>RUN SCAN</span>';
+            setScanProgressState(100, 'Failed', msg.message || 'Scan terminated with an error');
+            setProgressDetailsButton(false);
             refreshAfterScanEvent(currentScanId);
             // Stop polling on error
             if (detailsPollingInterval) {
@@ -770,75 +894,475 @@ function handleMessage(msg) {
     }
 }
 
+function setScanProgressState(percent, stage, detail) {
+    const fill = document.getElementById('scan-progress-fill');
+    const track = document.getElementById('scan-progress-track');
+    const percentLabel = document.getElementById('scan-progress-percent');
+    const stageLabel = document.getElementById('scan-stage-text');
+    const detailLabel = document.getElementById('scan-stage-subtext');
+
+    if (!fill || !track) return;
+
+    const currentPercent = Number(fill.dataset.percent || '0');
+    const resolved = percent == null ? currentPercent : Math.max(0, Math.min(100, Number(percent)));
+
+    fill.style.width = `${resolved}%`;
+    fill.dataset.percent = String(resolved);
+    track.setAttribute('aria-valuenow', String(Math.round(resolved)));
+
+    if (percentLabel) percentLabel.textContent = `${Math.round(resolved)}%`;
+    if (stageLabel && stage) stageLabel.textContent = stage;
+    if (detailLabel && detail) detailLabel.textContent = detail;
+}
+
+function setProgressDetailsButton(visible) {
+    const btn = document.getElementById('scan-progress-details-btn');
+    if (!btn) return;
+    const shouldShow = Boolean(visible) && Boolean(currentScanId);
+    btn.style.display = shouldShow ? 'inline-flex' : 'none';
+}
+
+window.openProgressScanDetails = function() {
+    if (!currentScanId) return;
+    viewScan(currentScanId);
+};
+
 function logTerminal(text, type = 'info') {
-    const terminal = document.getElementById('terminal-content');
-    const div = document.createElement('div');
-    div.className = 'line';
-
-    let color = '#ccc';
-    if (type === 'error' || type === 'high-risk') color = '#ff5f56';
-    if (type === 'success') color = '#27c93f';
-    if (type === 'info') color = '#00f3ff';
-    if (type === 'warn') color = '#ffbd2e';
-
-    // XSS Prevention: Use textContent instead of innerHTML for user data
-    const promptSpan = document.createElement('span');
-    promptSpan.className = 'prompt';
-    promptSpan.textContent = '$';
-
-    const textSpan = document.createElement('span');
-    textSpan.style.color = color;
-    textSpan.textContent = ' ' + text;
-
-    div.appendChild(promptSpan);
-    div.appendChild(textSpan);
-
-    const existingCursor = terminal.querySelector('.cursor');
-    if (existingCursor) existingCursor.remove();
-
-    terminal.appendChild(div);
-    const cursor = document.createElement('span');
-    cursor.className = 'cursor';
-    cursor.textContent = '_';
-    div.appendChild(cursor);
-
-    terminal.scrollTop = terminal.scrollHeight;
+    const stageMap = {
+        error: 'Failed',
+        'high-risk': 'Warning',
+        success: 'Completed',
+        warn: 'Notice',
+        info: 'Running'
+    };
+    const stage = stageMap[type] || 'Running';
+    setScanProgressState(null, stage, text);
 }
 
 function clearTerminal() {
-    const terminal = document.getElementById('terminal-content');
-    terminal.innerHTML = '<div class="line"><span class="prompt">$</span> <span class="cmd-text">Ready to scan...</span><span class="cursor">_</span></div>';
+    setScanProgressState(0, 'Initializing', 'Preparing scan session...');
+    setProgressDetailsButton(false);
+}
+
+let dashboardTrendPoints = [];
+
+function setDashboardMetric(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = String(value);
+}
+
+function setChartCaption(id, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+}
+
+function resetDashboardChartCaptions() {
+    setChartCaption('dashboard-risk-caption', 'Click bar to open scan');
+    setChartCaption('dashboard-trend-caption', 'Click bar to open scan');
+}
+
+function bindChartHover(containerId, captionId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const handleEnter = (event) => {
+        const point = event.target.closest('.chart-point[data-caption]');
+        if (!point || !container.contains(point)) return;
+        setChartCaption(captionId, point.getAttribute('data-caption') || '');
+    };
+
+    const handleLeave = () => {
+        resetDashboardChartCaptions();
+    };
+
+    container.addEventListener('mouseover', handleEnter);
+    container.addEventListener('focusin', handleEnter);
+    container.addEventListener('mouseleave', handleLeave);
+    container.addEventListener('focusout', handleLeave);
+}
+
+function initializeDashboardChartInteractions() {
+    bindChartHover('dashboard-risk-bars', 'dashboard-risk-caption');
+    bindChartHover('dashboard-trend-bars', 'dashboard-trend-caption');
+    resetDashboardChartCaptions();
+}
+
+window.openDashboardScanFromChart = function(scanId, source = 'chart') {
+    const parsed = Number(scanId);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    setChartCaption('dashboard-risk-caption', `Opening #${parsed} (${source})`);
+    setChartCaption('dashboard-trend-caption', `Opening #${parsed} (${source})`);
+    setTimeout(resetDashboardChartCaptions, 1200);
+    viewScan(parsed);
+};
+
+function renderRecentScans(sessions) {
+    const recentList = document.getElementById('dashboard-recent-list');
+    const completedRate = document.getElementById('dashboard-completed-rate');
+    if (!recentList) return;
+
+    if (!sessions || sessions.length === 0) {
+        recentList.innerHTML = '<div class="recent-empty">No scans yet</div>';
+        if (completedRate) completedRate.textContent = '0% completed';
+        return;
+    }
+
+    const completedCount = sessions.filter(s => String(s.status).toLowerCase() === 'completed').length;
+    const percent = Math.round((completedCount / sessions.length) * 100);
+    if (completedRate) completedRate.textContent = `${percent}% completed`;
+
+    recentList.innerHTML = sessions.slice(0, 3).map(s => {
+        const id = parseInt(s.id);
+        const status = escapeHtml(String(s.status || 'unknown'));
+        const found = parseInt(s.total_found || 0);
+        const highRisk = parseInt(s.high_risk_count || 0);
+        const date = new Date(s.created_at || s.start_time).toLocaleDateString();
+        return `
+            <div class="recent-row">
+                <div class="recent-main">
+                    <div class="recent-title">#${id} - ${status}</div>
+                    <div class="recent-meta">Found ${found} / High ${highRisk} - ${escapeHtml(date)}</div>
+                </div>
+                <button class="action-btn dashboard-open-btn" onclick="openDashboardScanFromChart(${id}, 'recent')" title="Open Scan">></button>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderRecentFavorites(favorites) {
+    const list = document.getElementById('dashboard-favorites-list');
+    if (!list) return;
+
+    if (!favorites || favorites.length === 0) {
+        list.innerHTML = '<div class="recent-empty">No favorites yet</div>';
+        return;
+    }
+
+    list.innerHTML = favorites.slice(0, 3).map(plugin => {
+        const rawSlug = String(plugin.slug || 'unknown-plugin');
+        const slug = escapeHtml(rawSlug);
+        const slugJs = JSON.stringify(rawSlug);
+        const score = parseInt(plugin.score || 0);
+        const version = escapeHtml(String(plugin.version || 'n/a'));
+        return `
+            <div class="recent-row">
+                <div class="recent-main">
+                    <div class="recent-title">${slug}</div>
+                    <div class="recent-meta">v${version} / Risk ${score}</div>
+                </div>
+                <button class="action-btn dashboard-open-btn" onclick='openPluginModalBySlug(${slugJs})' title="Open Favorite">></button>
+            </div>
+        `;
+    }).join('');
+}
+
+async function refreshDashboardFavorites() {
+    try {
+        const response = await fetch('/api/favorites');
+        if (!response.ok) throw new Error(`Favorites fetch failed: ${response.status}`);
+        const data = await response.json();
+        renderRecentFavorites(data.favorites || []);
+    } catch (error) {
+        renderRecentFavorites([]);
+    }
+}
+
+function renderRiskBars(sessions) {
+    const riskBars = document.getElementById('dashboard-risk-bars');
+    const riskCaption = document.getElementById('dashboard-risk-caption');
+    if (!riskBars) return;
+
+    if (!sessions || sessions.length === 0) {
+        riskBars.innerHTML = '';
+        if (riskCaption) riskCaption.textContent = 'No history';
+        return;
+    }
+
+    const recent = sessions.slice(0, 8).reverse();
+    const maxFound = Math.max(1, ...recent.map(s => parseInt(s.total_found || 0)));
+
+    riskBars.innerHTML = recent.map((s) => {
+        const id = parseInt(s.id);
+        const found = parseInt(s.total_found || 0);
+        const high = parseInt(s.high_risk_count || 0);
+        const ratio = found > 0 ? high / found : 0;
+        const height = Math.max(10, Math.round((found / maxFound) * 100));
+        const level = ratio >= 0.35 ? 'high' : (ratio >= 0.15 ? 'medium' : 'low');
+        const title = `Scan #${id} | Found ${found} | High ${high}`;
+        const caption = `#${id} risk ${high}/${found}`;
+        return `
+            <button class="bar-item chart-point ${level}" type="button" data-scan-id="${id}" data-caption="${caption}" style="--h:${height}%" title="${title}" onclick="openDashboardScanFromChart(${id}, 'risk')"></button>
+        `;
+    }).join('');
+
+    if (riskCaption) {
+        const highSum = recent.reduce((acc, s) => acc + parseInt(s.high_risk_count || 0), 0);
+        riskCaption.textContent = `${highSum} high-risk total - click a bar`;
+    }
+}
+
+function renderTrendBars() {
+    const trendBars = document.getElementById('dashboard-trend-bars');
+    const trendCaption = document.getElementById('dashboard-trend-caption');
+    if (!trendBars) return;
+
+    if (!dashboardTrendPoints.length) {
+        trendBars.innerHTML = '';
+        if (trendCaption) trendCaption.textContent = 'No trend data';
+        return;
+    }
+
+    const maxVal = Math.max(1, ...dashboardTrendPoints.map(item => item.value));
+    trendBars.innerHTML = dashboardTrendPoints.map((item) => {
+        const value = Number(item.value || 0);
+        const h = Math.max(8, Math.round((value / maxVal) * 100));
+        const scanId = Number(item.scanId || 0);
+        if (scanId > 0) {
+            const title = `Scan #${scanId} | Found ${value}`;
+            const caption = `#${scanId} found ${value}`;
+            return `<button class="spark-item chart-point" type="button" data-scan-id="${scanId}" data-caption="${caption}" style="--h:${h}%" title="${title}" onclick="openDashboardScanFromChart(${scanId}, 'trend')"></button>`;
+        }
+        return `<div class="spark-item" style="--h:${h}%" title="Live found: ${value}"></div>`;
+    }).join('');
+
+    if (trendCaption) trendCaption.textContent = `Recent ${dashboardTrendPoints.length} sessions - click a bar`;
+}
+
+function renderTrendBarsFromSessions(sessions) {
+    dashboardTrendPoints = (sessions || []).slice(0, 8).reverse().map((s) => ({
+        value: parseInt(s.total_found || 0),
+        scanId: parseInt(s.id || 0)
+    })).slice(-8);
+    renderTrendBars();
+}
+
+function appendTrendPoint(value) {
+    const parsed = parseInt(value || 0);
+    if (!Number.isFinite(parsed)) return;
+    dashboardTrendPoints.push({
+        value: parsed,
+        scanId: Number(currentScanId) || 0
+    });
+    dashboardTrendPoints = dashboardTrendPoints.slice(-8);
+    renderTrendBars();
+}
+
+function refreshScanDashboard(sessions) {
+    const safeSessions = sessions || [];
+    const totalScans = safeSessions.length;
+    const highRiskTotal = safeSessions.reduce((acc, s) => acc + parseInt(s.high_risk_count || 0), 0);
+    setDashboardMetric('dashboard-total-scans', totalScans);
+    setDashboardMetric('dashboard-high-risk', highRiskTotal);
+    renderRecentScans(safeSessions);
+    refreshDashboardFavorites();
+    renderRiskBars(safeSessions);
+    renderTrendBarsFromSessions(safeSessions);
+    resetDashboardChartCaptions();
+}
+
+const historySemgrepStatsCache = new Map();
+
+function getHistorySemgrepState(stats, isThemeSession = false) {
+    if (isThemeSession) {
+        return {
+            cls: 'na',
+            state: 'N/A',
+            count: '--',
+            progress: 0,
+            title: 'Semgrep is not available for theme sessions.'
+        };
+    }
+
+    if (!stats) {
+        return {
+            cls: 'empty',
+            state: 'WAIT',
+            count: '--/--',
+            progress: 0,
+            title: 'Semgrep data is not available for this session yet.'
+        };
+    }
+
+    const scannedCount = parseInt(stats.scanned_count || 0, 10) || 0;
+    const totalPlugins = parseInt(stats.total_plugins || 0, 10) || 0;
+    const totalFindings = parseInt(stats.total_findings || 0, 10) || 0;
+    const progress = Math.max(0, Math.min(100, parseInt(stats.progress || 0, 10) || 0));
+    const safeTotal = totalPlugins > 0 ? totalPlugins : Math.max(scannedCount, 0);
+    const pair = safeTotal > 0 ? `${scannedCount}/${safeTotal}` : '--/--';
+
+    if (stats.is_running) {
+        return {
+            cls: 'running',
+            state: 'RUN',
+            count: pair,
+            progress,
+            title: `Semgrep scanning in progress (${progress}% - ${pair}).`
+        };
+    }
+
+    if (scannedCount === 0) {
+        return {
+            cls: 'empty',
+            state: 'WAIT',
+            count: safeTotal > 0 ? `0/${safeTotal}` : '0/0',
+            progress: 0,
+            title: 'Semgrep has not run for this session yet.'
+        };
+    }
+
+    if (progress >= 100 || (safeTotal > 0 && scannedCount >= safeTotal)) {
+        if (totalFindings > 0) {
+            return {
+                cls: 'alert',
+                state: 'ISSUE',
+                count: String(totalFindings),
+                progress: 100,
+                title: `${totalFindings} findings detected (${pair} analyzed).`
+            };
+        }
+        return {
+            cls: 'complete',
+            state: 'CLEAN',
+            count: pair,
+            progress: 100,
+            title: `Semgrep completed clean (${pair} analyzed).`
+        };
+    }
+
+    return {
+        cls: 'partial',
+        state: 'PART',
+        count: pair,
+        progress,
+        title: `Partial semgrep progress (${pair}, ${totalFindings} findings).`
+    };
+}
+
+function applyHistorySemgrepBadge(sessionId, stats, isThemeSession = false) {
+    const cell = document.getElementById(`history-semgrep-${sessionId}`);
+    const stateEl = document.getElementById(`history-semgrep-state-${sessionId}`);
+    const countEl = document.getElementById(`history-semgrep-count-${sessionId}`);
+    const fillEl = document.getElementById(`history-semgrep-fill-${sessionId}`);
+    if (!cell || !stateEl || !countEl || !fillEl) return;
+
+    const state = getHistorySemgrepState(stats, isThemeSession);
+    cell.className = `history-semgrep-cell ${state.cls}`;
+    cell.title = state.title;
+    stateEl.textContent = state.state;
+    countEl.textContent = state.count;
+    fillEl.style.width = `${state.progress}%`;
+}
+
+async function hydrateHistorySemgrepBadges(sessions) {
+    const pending = sessions.map(async (session) => {
+        const sessionId = parseInt(session.id, 10);
+        if (!Number.isFinite(sessionId) || sessionId <= 0) return;
+
+        const config = session.config || {};
+        const isThemeSession = Boolean(config.themes);
+        if (isThemeSession) {
+            applyHistorySemgrepBadge(sessionId, null, true);
+            return;
+        }
+
+        const cached = historySemgrepStatsCache.get(sessionId);
+        if (cached) {
+            applyHistorySemgrepBadge(sessionId, cached, false);
+            return;
+        }
+
+        try {
+            const response = await fetch(apiNoCacheUrl(`/api/semgrep/bulk/${sessionId}/stats`));
+            if (!response.ok) {
+                applyHistorySemgrepBadge(sessionId, null, false);
+                return;
+            }
+            const stats = await response.json();
+            historySemgrepStatsCache.set(sessionId, stats);
+            applyHistorySemgrepBadge(sessionId, stats, false);
+        } catch (error) {
+            applyHistorySemgrepBadge(sessionId, null, false);
+        }
+    });
+
+    await Promise.allSettled(pending);
 }
 
 window.loadHistory = async function() {
     const list = document.getElementById('history-list');
-    if (!list) return;
     
     try {
         const response = await fetch(apiNoCacheUrl('/api/scans'));
         const data = await response.json();
-        const sessions = data.sessions.sort((a, b) => new Date(b.created_at || b.start_time) - new Date(a.created_at || a.start_time));
-        list.innerHTML = sessions.map(s => `
-            <tr>
-                <td>#${escapeHtml(String(s.id))}</td>
-                <td><span class="status-badge ${escapeHtml(s.status).toLowerCase()}">${escapeHtml(s.status)}</span></td>
-                <td>${escapeHtml(String(s.total_found))}</td>
-                <td>${escapeHtml(String(s.high_risk_count))}</td>
-                <td>${escapeHtml(new Date(s.created_at || s.start_time).toLocaleString())}</td>
-                <td>
-                    <div style="display: flex; gap: 8px;">
-                        <button onclick="viewScan(${parseInt(s.id)})" class="action-btn" title="View Results" style="width: 32px; height: 32px; padding: 0; background: #333; color: white;">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                        </button>
-                        <button onclick="deleteScan(${parseInt(s.id)})" class="action-btn" title="Delete Scan" style="width: 32px; height: 32px; padding: 0; background: rgba(255, 0, 85, 0.1); color: #ff0055; border: 1px solid rgba(255, 0, 85, 0.2);">
+        const sessions = (data.sessions || []).sort((a, b) => new Date(b.created_at || b.start_time) - new Date(a.created_at || a.start_time));
+        const maxPluginsFound = sessions.reduce((max, session) => {
+            const sessionCount = parseInt(session.total_found || 0, 10) || 0;
+            return Math.max(max, sessionCount);
+        }, 1);
+        refreshScanDashboard(sessions);
+
+        if (!list) return;
+        list.innerHTML = sessions.map(s => {
+            const scanId = parseInt(s.id, 10);
+            const totalFound = parseInt(s.total_found || 0, 10) || 0;
+            const highRiskCount = parseInt(s.high_risk_count || 0, 10) || 0;
+            const foundRatio = maxPluginsFound > 0 ? Math.min(100, Math.round((totalFound / maxPluginsFound) * 100)) : 0;
+            const foundLevel = foundRatio >= 70 ? 'high' : (foundRatio >= 35 ? 'medium' : 'low');
+            const riskLevel = highRiskCount >= 20 ? 'high' : (highRiskCount >= 5 ? 'medium' : 'low');
+            const riskRatio = totalFound > 0 ? Math.min(100, Math.round((highRiskCount / totalFound) * 100)) : 0;
+            const config = s.config || {};
+            const isThemeSession = Boolean(config.themes);
+            const modeLabel = isThemeSession ? 'THEME' : 'PLUGIN';
+            const modeClass = isThemeSession ? 'theme' : 'plugin';
+
+            return `
+            <tr class="history-row" tabindex="0" onclick="viewScan(${scanId})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewScan(${scanId});}">
+                <td class="history-col-id">#${escapeHtml(String(s.id))}</td>
+                <td class="history-col-status"><span class="status-badge ${escapeHtml(s.status).toLowerCase()}">${escapeHtml(s.status)}</span></td>
+                <td class="history-col-found">
+                    <div class="history-found-cell" title="${totalFound} plugins found (relative density ${foundRatio}%)">
+                        <span class="history-found-count">${escapeHtml(String(totalFound))}</span>
+                        <span class="history-found-label">plugins</span>
+                        <span class="history-found-track"><span class="history-found-fill ${foundLevel}" style="width: ${foundRatio}%;"></span></span>
+                    </div>
+                </td>
+                <td class="history-col-risk">
+                    <div class="history-risk-cell" title="${highRiskCount} high risk / ${totalFound} total (${riskRatio}%)">
+                        <span class="history-risk-pill ${riskLevel}">${escapeHtml(String(highRiskCount))}</span>
+                        <span class="history-risk-meter"><span class="history-risk-fill ${riskLevel}" style="width: ${riskRatio}%;"></span></span>
+                    </div>
+                </td>
+                <td class="history-col-date"><span class="history-date-stamp">${escapeHtml(new Date(s.created_at || s.start_time).toLocaleString())}</span></td>
+                <td class="history-col-semgrep">
+                    <div id="history-semgrep-${scanId}" class="history-semgrep-cell empty" title="Semgrep status pending">
+                        <span id="history-semgrep-count-${scanId}" class="history-semgrep-pill">--</span>
+                        <span class="history-semgrep-meter"><span id="history-semgrep-fill-${scanId}" class="history-semgrep-fill" style="width: 0%;"></span></span>
+                        <span id="history-semgrep-state-${scanId}" class="history-semgrep-state">WAIT</span>
+                    </div>
+                </td>
+                <td class="history-col-mode">
+                    <span class="history-mode-chip ${modeClass}">${escapeHtml(modeLabel)}</span>
+                </td>
+                <td class="history-col-actions">
+                    <div class="history-actions">
+                        <span class="history-action-open" aria-hidden="true">
+                            <span>Open</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                        </span>
+                        <button onclick="event.stopPropagation(); deleteScan(${scanId})" class="action-btn history-action-delete" title="Delete Scan" aria-label="Delete scan #${scanId}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                         </button>
                     </div>
                 </td>
             </tr>
-        `).join('');
+        `;
+        }).join('');
+        hydrateHistorySemgrepBadges(sessions);
     } catch (error) {
-        list.innerHTML = '<tr><td colspan="6">Error loading history</td></tr>';
+        if (list) list.innerHTML = '<tr><td colspan="8">Error loading history</td></tr>';
+        refreshScanDashboard([]);
     }
 }
 window.refreshHistory = window.loadHistory;
@@ -866,6 +1390,7 @@ window.loadFavorites = async function() {
         const data = await resp.json();
         
         window.currentScanResults = data.favorites || [];
+        renderRecentFavorites(window.currentScanResults);
         
         list.innerHTML = window.currentScanResults.map((r, index) => `
             <tr>
@@ -894,6 +1419,7 @@ window.removeFromFavorites = async function(slug) {
     if(!confirmed) return;
     await fetch(`/api/favorites/${slug}`, {method: 'DELETE'});
     window.favoriteSlugs.delete(slug);
+    refreshDashboardFavorites();
     loadFavorites();
 }
 
@@ -927,6 +1453,8 @@ window.toggleFavorite = async function(slug) {
     if (currentScanId) {
         viewScan(currentScanId);
     }
+
+    refreshDashboardFavorites();
 }
 
 window.viewScan = async function(id) {
