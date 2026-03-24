@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""
-WP-Hunter: WordPress Plugin & Theme Security Scanner
+"""WP-Hunter web launcher."""
 
-A reconnaissance tool for identifying vulnerable WordPress plugins and themes.
+import os
+import uvicorn
 
-Usage:
-    python3 wp-hunter.py [options]         # CLI mode (default)
-    python3 wp-hunter.py --gui             # Launch web dashboard
+from server.app import create_app
 
-For full options, run: python3 wp-hunter.py --help
-"""
 
-from wp_hunter.cli import main
+def main() -> None:
+    app = create_app()
+    host = os.getenv("WP_HUNTER_HOST", "127.0.0.1")
+    port = int(os.getenv("WP_HUNTER_PORT", "8080"))
+    uvicorn.run(app, host=host, port=port, log_level="warning", workers=1)
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,14 @@
+Semgrep Third-Party Source Notice
+=================================
+
+WP-Hunter installs Semgrep from upstream Python packages during Docker build
+(`pip install -r requirements.txt`).
+
+Semgrep upstream project:
+- Repository: https://github.com/semgrep/semgrep
+- License: GNU Lesser General Public License v2.1 (LGPL-2.1)
+- Upstream license text: https://github.com/semgrep/semgrep/blob/develop/LICENSE
+
+If you redistribute a build artifact containing Semgrep binaries or modified
+Semgrep components, ensure LGPL-2.1 obligations are satisfied for that
+component (including license notice and source availability requirements).

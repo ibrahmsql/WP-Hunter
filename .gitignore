@@ -188,6 +188,13 @@ Plugins/
 wphunter.db
 .DS_Store
 semgrep_results/
+.wp-hunter/
+wp_hunter.log
+
+# Local agent/runtime artifacts
+skills/
+.claude-plugin/
+.tools/
 
 # Local automation runtime artifacts
 labels/
@@ -199,3 +206,4 @@ views.json
 # Root-local scratch files
 /config.json
 /package-lock.json
+/node_modules/

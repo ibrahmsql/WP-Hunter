@@ -1,5 +1,4 @@
 
-<h2 align="center">🚀 AI-powered source code analysis is COMING SOON.</h2>
 <div align="center">
   <img src="assets/banner.png" alt="WP-Hunter Banner" width="600"/>
 </div>
@@ -8,21 +7,6 @@
   <img src="https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white" alt="Python 3.8+">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License MIT">
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey" alt="Platform">
-</p>
-
-<p align="center">
-  <a href="https://www.producthunt.com/products/wp-hunter?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-wp-hunter" target="_blank" rel="noopener noreferrer">
-    <img alt="WP-Hunter - WP plugin recon & SAST tool for security researchers. | Product Hunt" width="220" height="48" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1084875&theme=light&t=1771939449742">
-  </a>
-</p>
-
-<p align="center">
-  <b>🌐 Languages / Dil / 语言 / اللغات / Sprachen:</b><br>
-  <a href="README.md"><img src="https://img.shields.io/badge/🇬🇧-English-blue" alt="English"></a>
-  <a href="README.tr.md"><img src="https://img.shields.io/badge/🇹🇷-Türkçe-red" alt="Türkçe"></a>
-  <a href="README.zh.md"><img src="https://img.shields.io/badge/🇨🇳-简体中文-yellow" alt="简体中文"></a>
-  <a href="README.ar.md"><img src="https://img.shields.io/badge/🇸🇦-العربية-green" alt="العربية"></a>
-  <a href="README.de.md"><img src="https://img.shields.io/badge/🇩🇪-Deutsch-orange" alt="Deutsch"></a>
 </p>
 
 WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST) tool**. It is designed for **security researchers** to evaluate the **vulnerability probability** of plugins by analyzing metadata, installation patterns, update histories, and performing deep **Semgrep-powered source code analysis**.
@@ -126,41 +110,19 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
-
 ## 🛠️ Usage
 
-### 1. Launching the Web Dashboard (Recommended)
+### 1. Start WP-Hunter (Docker + Web UI)
 ```bash
-python3 wp-hunter.py --gui
+chmod +x run.sh
+./run.sh
 ```
-Access the interface at `http://localhost:8080`.
+Access the interface at `http://127.0.0.1:8080`.
 
-### 2. Database Sync (For Offline Recon)
-Populate your local database with plugin metadata for instant filtering:
-```bash
-# Sync top 100 pages of plugins
-python3 wp-hunter.py --sync-db --sync-pages 100
-
-# Sync the entire WordPress catalog (~60k plugins)
-python3 wp-hunter.py --sync-all
-```
-
-### 3. Local Database Querying
-Query your local database without hitting the WordPress API:
-```bash
-# Find plugins with 10k+ installs not updated for 2 years
-python3 wp-hunter.py --query-db --min 10000 --abandoned
-
-# Search for "form" plugins with low ratings
-python3 wp-hunter.py --query-db --search "form" --sort-by rating --sort-order asc
-```
-
-### 4. CLI Scanning (Classic Mode)
-```bash
-# Scan 10 pages of updated plugins with Semgrep analysis enabled
-python3 wp-hunter.py --pages 10 --semgrep-scan --limit 20
-```
+### 2. Run Scans from Dashboard
+- Configure scan filters in **NEW SCAN**.
+- Click **RUN SCAN**.
+- Open plugin details for Semgrep audit actions.
 
 ---
 
@@ -169,15 +131,15 @@ python3 wp-hunter.py --pages 10 --semgrep-scan --limit 20
 ### 1. The "Zombie" Hunt (High Success Rate)
 Target plugins that are widely used but abandoned.
 *   **Logic:** Legacy code often lacks modern security standards (missing nonces, weak sanitization).
-*   **Command:** `python3 wp-hunter.py --abandoned --min 1000 --sort popular`
+*   **Dashboard Preset:** Enable `Abandoned`, keep `Min Installs` high, and sort by update freshness.
 
 ### 2. The "Aggressive" Mode
 For high-speed, high-concurrency reconnaissance across large scopes.
-*   **Command:** `python3 wp-hunter.py --aggressive --pages 200`
+*   **Dashboard Preset:** Increase `Pages`, keep `Limit` high/zero, and enable `Smart Mode`.
 
 ### 3. The "Complexity" Trap
 Target complex functionality (File Uploads, Payments) in mid-range plugins.
-*   **Command:** `python3 wp-hunter.py --smart --min 500 --max 10000`
+*   **Dashboard Preset:** Enable `Smart Mode`, set a moderate install range, then run Semgrep audit from plugin details.
 
 ---
 
@@ -205,6 +167,8 @@ This tool is designed for **security research and authorized reconnaissance** pu
 - WP-Hunter is licensed under MIT (`LICENSE`).
 - Semgrep is used as a third-party scanner and keeps its own `LGPL-2.1` license.
 - See `THIRD_PARTY_LICENSES.md` for details.
+- Canonical LGPL text is included at `licenses/LGPL-2.1.txt`.
+- Docker image redistributes license artifacts under `/licenses`.
 
 ---
 

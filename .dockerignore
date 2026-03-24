@@ -1,0 +1,15 @@
+.git
+.gitignore
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.tools
+Plugins
+semgrep_results
+wp_hunter.log
+*.log
