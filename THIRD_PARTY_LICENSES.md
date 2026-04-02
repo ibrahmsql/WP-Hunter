@@ -2,9 +2,9 @@
 
 This project is licensed under the MIT License (`LICENSE`).
 
-WP-Hunter integrates third-party tools and dependencies. Their licenses remain in effect for their respective components.
+Temodar Agent integrates third-party tools and dependencies. Their licenses remain in effect for their respective components.
 
-## WP-Hunter (Main Project)
+## Temodar Agent (Main Project)
 
 - License: MIT
 - License file: `LICENSE`
@@ -18,18 +18,18 @@ WP-Hunter integrates third-party tools and dependencies. Their licenses remain i
 - Canonical LGPL text in this repo: `licenses/LGPL-2.1.txt`
 - Source notice in this repo: `licenses/SEMGREP_SOURCE_NOTICE.txt`
 
-### Usage in WP-Hunter
+### Usage in Temodar Agent
 
-WP-Hunter invokes Semgrep as an external scanner process for static analysis.
-WP-Hunter does not relicense Semgrep, and Semgrep remains covered by its own LGPL-2.1 license.
+Temodar Agent invokes Semgrep as an external scanner process for static analysis.
+Temodar Agent does not relicense Semgrep, and Semgrep remains covered by its own LGPL-2.1 license.
 
 If you redistribute Semgrep binaries or modified Semgrep code as part of another package, you must satisfy LGPL-2.1 obligations for that component.
 
 ### Docker redistribution note
 
-WP-Hunter Docker image copies license artifacts into `/licenses`:
+Temodar Agent Docker image copies license artifacts into `/licenses`:
 
-- `/licenses/WP-Hunter-MIT.txt`
+- `/licenses/Temodar Agent-MIT.txt`
 - `/licenses/THIRD_PARTY_LICENSES.md`
 - `/licenses/LGPL-2.1.txt`
 - `/licenses/SEMGREP_SOURCE_NOTICE.txt`

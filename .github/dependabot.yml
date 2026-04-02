@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/ai/node_runner"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+      - ai

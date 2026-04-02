@@ -1,14 +1,24 @@
 Semgrep Third-Party Source Notice
 =================================
 
-WP-Hunter installs Semgrep from upstream Python packages during Docker build
+Temodar Agent installs Semgrep from upstream Python packages during Docker build
 (`pip install -r requirements.txt`).
 
-Semgrep upstream project:
+Semgrep Community Edition (engine)
 - Repository: https://github.com/semgrep/semgrep
 - License: GNU Lesser General Public License v2.1 (LGPL-2.1)
 - Upstream license text: https://github.com/semgrep/semgrep/blob/develop/LICENSE
 
-If you redistribute a build artifact containing Semgrep binaries or modified
-Semgrep components, ensure LGPL-2.1 obligations are satisfied for that
-component (including license notice and source availability requirements).
+Important licensing distinction
+- The Semgrep Community Edition engine is open source and licensed under LGPL-2.1.
+- Semgrep-maintained rules/rulesets are licensed separately and may be subject to
+  the Semgrep Rules License v1.0 rather than LGPL-2.1.
+- Commercial Semgrep offerings are proprietary and are not covered by LGPL-2.1.
+
+Redistribution guidance
+- If you redistribute build artifacts containing the Semgrep engine or modified
+  Semgrep engine components, ensure LGPL-2.1 obligations are satisfied for that
+  component (including license notice and source availability requirements where
+  applicable).
+- If you bundle or redistribute Semgrep-maintained rules, review and comply with
+  their separate license terms.

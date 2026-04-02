@@ -1,5 +1,5 @@
 """
-WP-Hunter Data Models
+Temodar Agent Data Models
 
 All dataclasses and type definitions for the application.
 """
@@ -108,9 +108,6 @@ class PluginResult:
     wp_org_link: str = ""
     cve_search_link: str = ""
     wpscan_link: str = ""
-    patchstack_link: str = ""
-    wordfence_link: str = ""
-    google_dork_link: str = ""
     trac_link: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -136,9 +133,6 @@ class PluginResult:
             "wp_org_link": self.wp_org_link,
             "cve_search_link": self.cve_search_link,
             "wpscan_link": self.wpscan_link,
-            "patchstack_link": self.patchstack_link,
-            "wordfence_link": self.wordfence_link,
-            "google_dork_link": self.google_dork_link,
             "trac_link": self.trac_link,
         }
 

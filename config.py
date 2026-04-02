@@ -1,17 +1,22 @@
 """
-WP-Hunter Configuration and Constants
+Temodar Agent Configuration and Constants
 
 All global constants, tag sets, and color definitions.
 """
 
-from typing import Set
+from typing import Final, Set
 
 # --- VERSION & LIMITS ---
-CURRENT_WP_VERSION = 6.7
+CURRENT_WP_VERSION: Final[float] = 6.7
 
 # --- SECURITY LIMITS ---
 # Maximum connection pool size to prevent DoS via resource exhaustion
-MAX_POOL_SIZE = 50
+MAX_POOL_SIZE: Final[int] = 50
+
+# --- PROVIDER DEFAULTS ---
+DEFAULT_QUERY_LIMIT: Final[int] = 100
+MAX_QUERY_LIMIT: Final[int] = 1000
+MAX_CATALOG_SESSION_LIMIT: Final[int] = 500
 
 # --- RISKY TAG SETS ---
 RISKY_TAGS: Set[str] = {
@@ -191,13 +196,3 @@ FEATURE_KEYWORDS: Set[str] = {
     "widget",
     "custom post type",
 }
-
-
-class Colors:
-    """ANSI color codes for terminal output."""
-
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    RED = "\033[91m"
-    CYAN = "\033[96m"
-    RESET = "\033[0m"

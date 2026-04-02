@@ -1,4 +1,4 @@
-"""WP-Hunter Analyzers Package"""
+"""Temodar Agent Analyzers Package"""
 
 from analyzers.vps_scorer import calculate_vps_score
 

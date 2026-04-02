@@ -1,4 +1,4 @@
-# WP-Hunter Requirements
+# Temodar Agent Requirements
 
 # Core
 requests>=2.31.0

@@ -3,11 +3,11 @@ import sys
 from pathlib import Path
 
 # Create logs directory
-LOG_DIR = Path.home() / ".wp-hunter" / "logs"
+LOG_DIR = Path.home() / ".temodar-agent" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "wp_hunter.log"
+LOG_FILE = LOG_DIR / "temodar_agent.log"
 
-def setup_logger(name: str = "wp_hunter") -> logging.Logger:
+def setup_logger(name: str = "temodar_agent") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.hasHandlers():
         return logger

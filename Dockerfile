@@ -3,23 +3,27 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    WP_HUNTER_HOST=0.0.0.0 \
-    WP_HUNTER_PORT=8080
+    TEMODAR_AGENT_HOST=0.0.0.0 \
+    TEMODAR_AGENT_PORT=8080
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     ca-certificates \
     git \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
 COPY . .
+RUN npm --prefix /app/ai/node_runner ci && npm --prefix /app/ai/node_runner run build
 
 RUN mkdir -p /licenses && \
-    cp /app/LICENSE /licenses/WP-Hunter-MIT.txt && \
+    cp /app/LICENSE /licenses/Temodar-Agent-MIT.txt && \
     cp /app/THIRD_PARTY_LICENSES.md /licenses/THIRD_PARTY_LICENSES.md && \
     cp /app/licenses/LGPL-2.1.txt /licenses/LGPL-2.1.txt && \
     cp /app/licenses/SEMGREP_SOURCE_NOTICE.txt /licenses/SEMGREP_SOURCE_NOTICE.txt
@@ -32,4 +36,4 @@ USER appuser
 
 EXPOSE 8080
 
-CMD ["python", "wp-hunter.py"]
+CMD ["python", "temodar-agent.py"]

@@ -1,57 +1,63 @@
 """
-WP-Hunter Plugin Scanner
+Temodar Agent Plugin Scanner
 
 Plugin fetching and analysis from WordPress.org API.
 """
 
-import time
-import threading
-import requests
-from typing import List, Dict, Any, Optional, Callable
-from urllib.parse import quote_plus
+from __future__ import annotations
 
-from logger import setup_logger
-from config import (
-    RISKY_TAGS,
-    USER_FACING_TAGS,
-    SECURITY_KEYWORDS,
-    FEATURE_KEYWORDS,
-)
-from models import ScanConfig, PluginResult
-from analyzers.vps_scorer import calculate_vps_score
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, Optional
+
+import requests
+
 from analyzers.risk_labeler import apply_relative_risk_labels
+from analyzers.vps_scorer import calculate_vps_score
+from config import (
+    FEATURE_KEYWORDS,
+    RISKY_TAGS,
+    SECURITY_KEYWORDS,
+    USER_FACING_TAGS,
+)
 from infrastructure.http_client import get_session
+from logger import setup_logger
+from models import PluginResult, ScanConfig
 from utils.date_utils import calculate_days_ago
 
 logger = setup_logger(__name__)
 
+WORDPRESS_PLUGIN_API_URL = "https://api.wordpress.org/plugins/info/1.2/"
+WORDPRESS_PLUGIN_PAGE_SIZE = 100
+DEFAULT_FETCH_RETRIES = 3
+FETCH_TIMEOUT_SECONDS = 30
+RATE_LIMIT_BACKOFF_SECONDS = 5
+NETWORK_RETRY_DELAY_SECONDS = 2
+AGGRESSIVE_SCAN_THREADS = 50
+DEFAULT_SCAN_THREADS = 5
+TRUSTED_AUTHOR_KEYWORDS = ("automattic", "wordpress.org")
 
-def analyze_changelog(sections: Dict[str, str]) -> tuple:
-    """Analyzes changelog for security and feature keywords."""
-    if not sections or "changelog" not in sections:
+
+def analyze_changelog(sections: Dict[str, str]) -> tuple[list[str], list[str]]:
+    """Analyze changelog text for security and feature keywords."""
+    changelog = str(sections.get("changelog", "") or "").lower()
+    if not changelog:
         return [], []
 
-    changelog_text = sections["changelog"].lower()
-    recent_log = changelog_text[:2000]
-    recent_words = set(recent_log.split())
-
-    found_security = list(SECURITY_KEYWORDS.intersection(recent_words))
-    found_features = list(FEATURE_KEYWORDS.intersection(recent_words))
-
+    recent_log = changelog[:2000]
+    found_security = [keyword for keyword in SECURITY_KEYWORDS if keyword in recent_log]
+    found_features = [keyword for keyword in FEATURE_KEYWORDS if keyword in recent_log]
     return found_security, found_features
 
 
-def fetch_plugins(
-    page: int, browse_type: str, max_retries: int = 3
-) -> List[Dict[str, Any]]:
-    """Fetches plugins from WP API with robust retry logic."""
-    session = get_session()
-    url = "https://api.wordpress.org/plugins/info/1.2/"
-    params = {
+def _plugin_query_params(page: int, browse_type: str) -> Dict[str, Any]:
+    """Build the WordPress.org plugin query payload."""
+    return {
         "action": "query_plugins",
         "request[browse]": browse_type,
         "request[page]": page,
-        "request[per_page]": 100,
+        "request[per_page]": WORDPRESS_PLUGIN_PAGE_SIZE,
         "request[fields][active_installs]": True,
         "request[fields][short_description]": True,
         "request[fields][last_updated]": True,
@@ -68,29 +74,136 @@ def fetch_plugins(
         "request[fields][donate_link]": True,
     }
 
+
+def _handle_rate_limit(attempt: int) -> None:
+    """Pause after WordPress API rate limiting."""
+    wait_time = RATE_LIMIT_BACKOFF_SECONDS * (attempt + 1)
+    logger.error("Rate limited, waiting %ss...", wait_time)
+    time.sleep(wait_time)
+
+
+def _handle_network_retry(error: Exception) -> None:
+    """Pause after transient network failures."""
+    logger.error("Network error (%s), retrying...", error)
+    time.sleep(NETWORK_RETRY_DELAY_SECONDS)
+
+
+def fetch_plugins(
+    page: int,
+    browse_type: str,
+    max_retries: int = DEFAULT_FETCH_RETRIES,
+) -> list[Dict[str, Any]]:
+    """Fetch plugins from WP API with retry logic."""
+    session = get_session()
+    params = _plugin_query_params(page, browse_type)
+
     for attempt in range(max_retries):
         try:
-            response = session.get(url, params=params, timeout=30)
-
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("plugins", []) if data else []
-
-            elif response.status_code == 429:
-                wait_time = 5 * (attempt + 1)
-                logger.error(f"Rate limited, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            logger.error(f"Network error ({e}), retrying...")
-            time.sleep(2)
+            response = session.get(
+                WORDPRESS_PLUGIN_API_URL,
+                params=params,
+                timeout=FETCH_TIMEOUT_SECONDS,
+            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            _handle_network_retry(exc)
             continue
-        except Exception as e:
-            logger.error(f"Unexpected API Error: {e}")
+        except Exception as exc:
+            logger.error("Unexpected API Error: %s", exc)
             break
 
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("plugins", []) if data else []
+
+        if response.status_code == 429:
+            _handle_rate_limit(attempt)
+            continue
+
+        logger.warning(
+            "Plugin API request returned non-success status",
+            extra={"status_code": response.status_code, "page": page, "browse_type": browse_type},
+        )
+        break
+
     return []
+
+
+def _matches_any_tag(
+    candidates: set[str],
+    plugin_tags: list[str],
+    name: str,
+    description: str,
+) -> list[str]:
+    """Find matching tags across plugin tags, name, and description."""
+    return [
+        tag for tag in candidates if tag in plugin_tags or tag in name or tag in description
+    ]
+
+
+def _resolve_user_facing(
+    config: ScanConfig,
+    plugin_tags: list[str],
+    name: str,
+    description: str,
+) -> tuple[bool, bool]:
+    """Resolve user-facing filter pass state and final flag."""
+    user_facing_match = _matches_any_tag(USER_FACING_TAGS, plugin_tags, name, description)
+    if config.user_facing and not user_facing_match:
+        return False, False
+    return True, bool(user_facing_match)
+
+
+def _support_resolution_rate(plugin: Dict[str, Any]) -> int:
+    """Compute support thread resolution rate percent."""
+    total_support = int(plugin.get("support_threads", 0) or 0)
+    resolved_support = int(plugin.get("support_threads_resolved", 0) or 0)
+    if total_support <= 0:
+        return 0
+    return int((resolved_support / total_support) * 100)
+
+
+def _is_trusted_author(author_raw: str) -> bool:
+    """Determine whether the plugin author matches trusted publishers."""
+    author_lower = author_raw.lower()
+    return any(keyword in author_lower for keyword in TRUSTED_AUTHOR_KEYWORDS)
+
+
+def _build_plugin_result(
+    *,
+    plugin: Dict[str, Any],
+    slug: str,
+    installs: int,
+    days_ago: int,
+    tested_ver: str,
+    matched_tags: list[str],
+    sec_flags: list[str],
+    feat_flags: list[str],
+    vps_score: int,
+    is_user_facing: bool,
+    is_trusted: bool,
+) -> PluginResult:
+    """Build the normalized PluginResult DTO."""
+    return PluginResult(
+        name=plugin.get("name", "Unknown"),
+        slug=slug,
+        version=plugin.get("version", "?"),
+        score=vps_score,
+        installations=installs,
+        days_since_update=days_ago,
+        tested_wp_version=tested_ver,
+        author_trusted=is_trusted,
+        is_risky_category=bool(matched_tags),
+        is_user_facing=is_user_facing,
+        is_theme=False,
+        risk_tags=matched_tags,
+        security_flags=sec_flags,
+        feature_flags=feat_flags,
+        download_link=plugin.get("download_link", ""),
+        wp_org_link=f"https://wordpress.org/plugins/{slug}/",
+        cve_search_link=f"https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword={slug}",
+        wpscan_link=f"https://wpscan.com/plugin/{slug}",
+        trac_link=f"https://plugins.trac.wordpress.org/log/{slug}/",
+    )
 
 
 class PluginScanner:
@@ -105,219 +218,189 @@ class PluginScanner:
         self.config = config
         self.on_result = on_result
         self.on_progress = on_progress
-        self.results: List[PluginResult] = []
+        self.results: list[PluginResult] = []
         self.found_count = 0
         self.stop_event = threading.Event()
         self._results_lock = threading.Lock()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the scan."""
         self.stop_event.set()
 
+    def _limit_reached(self) -> bool:
+        with self._results_lock:
+            return self.config.limit > 0 and self.found_count >= self.config.limit
+
+    def _should_stop(self) -> bool:
+        return self.stop_event.is_set() or self._limit_reached()
+
+    def _store_result(self, result: PluginResult) -> bool:
+        with self._results_lock:
+            if self.config.limit > 0 and self.found_count >= self.config.limit:
+                return False
+            self.found_count += 1
+            self.results.append(result)
+            return True
+
+    def _passes_install_filters(self, installs: int) -> bool:
+        """Check install-count filters."""
+        if installs < self.config.min_installs:
+            return False
+        if self.config.max_installs > 0 and installs > self.config.max_installs:
+            return False
+        return True
+
+    def _passes_update_age_filters(self, days_ago: int) -> bool:
+        """Check update-age and abandoned filters."""
+        if self.config.min_days > 0 and days_ago < self.config.min_days:
+            return False
+        if self.config.max_days > 0 and days_ago > self.config.max_days:
+            return False
+        if self.config.abandoned and days_ago < 730:
+            return False
+        return True
+
     def process_plugin(self, plugin: Dict[str, Any]) -> Optional[PluginResult]:
         """Process a single plugin and return a PluginResult if it passes filters."""
-        config = self.config
-
-        installs = plugin.get("active_installs", 0)
-
-        # Filter by installations
-        if installs < config.min_installs:
-            return None
-        if config.max_installs > 0 and installs > config.max_installs:
+        installs = int(plugin.get("active_installs", 0) or 0)
+        if not self._passes_install_filters(installs):
             return None
 
         days_ago = calculate_days_ago(plugin.get("last_updated"))
-
-        # Filter by update age
-        if config.min_days > 0 and days_ago < config.min_days:
-            return None
-        if config.max_days > 0 and days_ago > config.max_days:
+        if not self._passes_update_age_filters(days_ago):
             return None
 
-        # Abandoned filter
-        if config.abandoned and days_ago < 730:
+        plugin_tags = list((plugin.get("tags") or {}).keys())
+        name = str(plugin.get("name", "") or "").lower()
+        description = str(plugin.get("short_description", "") or "").lower()
+        matched_tags = _matches_any_tag(RISKY_TAGS, plugin_tags, name, description)
+        if self.config.smart and not matched_tags:
             return None
 
-        # Tag analysis
-        plugin_tags = list(plugin.get("tags", {}).keys())
-        name = plugin.get("name", "").lower()
-        desc = plugin.get("short_description", "").lower()
-        matched_tags = [
-            tag
-            for tag in RISKY_TAGS
-            if tag in plugin_tags or tag in name or tag in desc
-        ]
-
-        if config.smart and not matched_tags:
+        user_facing_passed, is_user_facing = _resolve_user_facing(
+            self.config,
+            plugin_tags,
+            name,
+            description,
+        )
+        if not user_facing_passed:
             return None
-
-        # User facing filter
-        is_user_facing = False
-        if config.user_facing:
-            user_facing_match = [
-                tag
-                for tag in USER_FACING_TAGS
-                if tag in plugin_tags or tag in name or tag in desc
-            ]
-            if not user_facing_match:
-                return None
-            is_user_facing = True
-        else:
-            user_facing_match = [
-                tag
-                for tag in USER_FACING_TAGS
-                if tag in plugin_tags or tag in name or tag in desc
-            ]
-            is_user_facing = bool(user_facing_match)
-
-        # Analysis
-        total_sup = plugin.get("support_threads", 0)
-        res_sup = plugin.get("support_threads_resolved", 0)
-        res_rate = int((res_sup / total_sup) * 100) if total_sup > 0 else 0
 
         sec_flags, feat_flags = analyze_changelog(plugin.get("sections", {}))
-        tested_ver = plugin.get("tested", "?")
-        slug = plugin.get("slug", "")
-
-        # Calculate VPS score
+        tested_ver = str(plugin.get("tested", "?") or "?")
+        slug = str(plugin.get("slug", "") or "")
+        author_raw = str(plugin.get("author", "Unknown") or "Unknown")
         vps_score = calculate_vps_score(
             plugin,
             days_ago,
             matched_tags,
-            res_rate,
+            _support_resolution_rate(plugin),
             tested_ver,
             sec_flags,
             None,
         )
 
-        author_raw = plugin.get("author", "Unknown")
-        is_trusted = (
-            "automattic" in author_raw.lower() or "wordpress.org" in author_raw.lower()
-        )
-
-        # Create plugin-focused Google dork (balanced, less noisy)
-        google_dork_query = (
-            f'"{slug}" '
-            f'intext:"{slug}" '
-            f'("wordpress plugin" OR "wp plugin" OR "wordpress.org/plugins/{slug}") '
-            f"(vulnerability OR exploit OR cve) "
-            f'-"wordpress theme" -"themes/"'
-        )
-
-        # Create result object
-        result = PluginResult(
-            name=plugin.get("name", "Unknown"),
+        return _build_plugin_result(
+            plugin=plugin,
             slug=slug,
-            version=plugin.get("version", "?"),
-            score=vps_score,
-            installations=installs,
-            days_since_update=days_ago,
-            tested_wp_version=tested_ver,
-            author_trusted=is_trusted,
-            is_risky_category=bool(matched_tags),
+            installs=installs,
+            days_ago=days_ago,
+            tested_ver=tested_ver,
+            matched_tags=matched_tags,
+            sec_flags=sec_flags,
+            feat_flags=feat_flags,
+            vps_score=vps_score,
             is_user_facing=is_user_facing,
-            is_theme=False,
-            risk_tags=matched_tags,
-            security_flags=sec_flags,
-            feature_flags=feat_flags,
-            download_link=plugin.get("download_link", ""),
-            wp_org_link=f"https://wordpress.org/plugins/{slug}/",
-            cve_search_link=f"https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword={slug}",
-            wpscan_link=f"https://wpscan.com/plugin/{slug}",
-            patchstack_link=f"https://patchstack.com/database?search={slug}",
-            wordfence_link=f"https://www.wordfence.com/threat-intel/vulnerabilities/search?search={slug}",
-            google_dork_link=f"https://www.google.com/search?q={quote_plus(google_dork_query)}",
-            trac_link=f"https://plugins.trac.wordpress.org/log/{slug}/",
+            is_trusted=_is_trusted_author(author_raw),
         )
 
-        return result
-
-    def scan_page(self, page: int) -> List[PluginResult]:
+    def scan_page(self, page: int) -> list[PluginResult]:
         """Scan a single page of plugins."""
-        if self.stop_event.is_set():
+        if self._should_stop():
             return []
 
-        with self._results_lock:
-            if self.config.limit > 0 and self.found_count >= self.config.limit:
-                return []
-
         plugins = fetch_plugins(page, self.config.sort)
-        results = []
-
+        page_results: list[PluginResult] = []
         for plugin in plugins:
-            if self.stop_event.is_set():
+            if self._should_stop():
                 break
 
-            with self._results_lock:
-                if self.config.limit > 0 and self.found_count >= self.config.limit:
-                    break
-
             result = self.process_plugin(plugin)
-            if result:
-                added = False
-                with self._results_lock:
-                    if self.config.limit > 0 and self.found_count >= self.config.limit:
-                        pass
-                    else:
-                        self.found_count += 1
-                        results.append(result)
-                        self.results.append(result)
-                        added = True
+            if result is None:
+                continue
+            if not self._store_result(result):
+                break
 
-                if added and self.on_result:
-                    self.on_result(result)
+            page_results.append(result)
+            if self.on_result:
+                self.on_result(result)
+        return page_results
 
-        return results
+    def _notify_progress(self, current: int, total: int) -> None:
+        if self.on_progress:
+            self.on_progress(current, total)
 
-    def scan(self) -> List[PluginResult]:
-        """Run the full scan based on configuration."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+    def _scan_sequentially(self, pages_to_scan: list[int]) -> list[PluginResult]:
+        """Run pages sequentially when a hard result limit is enforced."""
+        total_pages = len(pages_to_scan)
+        for index, page in enumerate(pages_to_scan, start=1):
+            if self._should_stop():
+                break
+            self.scan_page(page)
+            self._notify_progress(index, total_pages)
+        return self.results
 
-        pages_to_scan = list(range(1, self.config.pages + 1))
+    def _drain_future_results(
+        self,
+        futures: Dict[Future[list[PluginResult]], int],
+        total_pages: int,
+        executor: ThreadPoolExecutor,
+    ) -> list[PluginResult]:
+        """Collect concurrent page scan results and emit progress updates."""
+        for index, future in enumerate(as_completed(futures), start=1):
+            try:
+                future.result()
+            except Exception as exc:
+                failed_page = futures[future]
+                logger.error("Page scan failed for page %s: %s", failed_page, exc)
 
-        max_threads = 50 if self.config.aggressive else 5
-        if self.config.aggressive:
-            print(f"Using {max_threads} threads for aggressive scan...")
+            self._notify_progress(index, total_pages)
+            if self.stop_event.is_set():
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+        return self.results
 
-        if self.config.limit > 0:
-            total_pages = len(pages_to_scan)
-            for i, page in enumerate(pages_to_scan, start=1):
-                if self.stop_event.is_set():
-                    break
-                with self._results_lock:
-                    if self.found_count >= self.config.limit:
-                        break
-                self.scan_page(page)
-                if self.on_progress:
-                    self.on_progress(i, total_pages)
-            self._apply_relative_risk_labels()
-            return self.results
-
+    def _scan_concurrently(
+        self,
+        pages_to_scan: list[int],
+        max_threads: int,
+    ) -> list[PluginResult]:
+        """Run page scans concurrently for unrestricted scans."""
         with ThreadPoolExecutor(max_workers=max_threads) as executor:
             futures = {
                 executor.submit(self.scan_page, page): page for page in pages_to_scan
             }
+            return self._drain_future_results(futures, len(pages_to_scan), executor)
 
-            for i, future in enumerate(as_completed(futures)):
-                try:
-                    # scan_page appends to self.results, so we don't strictly need the return value
-                    # but checking it helps catch exceptions
-                    future.result()
-                except Exception as e:
-                    logger.error(f"Page scan failed: {e}")
+    def scan(self) -> list[PluginResult]:
+        """Run the full scan based on configuration."""
+        pages_to_scan = list(range(1, self.config.pages + 1))
+        max_threads = (
+            AGGRESSIVE_SCAN_THREADS if self.config.aggressive else DEFAULT_SCAN_THREADS
+        )
+        if self.config.aggressive:
+            logger.info("Using aggressive scan mode", extra={"max_threads": max_threads})
 
-                if self.on_progress:
-                    self.on_progress(i + 1, len(pages_to_scan))
-
-                if self.stop_event.is_set():
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    break
-
+        results = (
+            self._scan_sequentially(pages_to_scan)
+            if self.config.limit > 0
+            else self._scan_concurrently(pages_to_scan, max_threads)
+        )
         self._apply_relative_risk_labels()
-        return self.results
+        return results
 
     def _apply_relative_risk_labels(self) -> None:
-        """Apply relative risk labels (percentile-based) on top of absolute critical rule."""
+        """Apply relative risk labels on top of absolute critical rules."""
         apply_relative_risk_labels(
             self.results,
             get_score=lambda item: item.score,

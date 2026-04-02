@@ -1,181 +1,242 @@
-
-<div align="center">
-  <img src="assets/banner.png" alt="WP-Hunter Banner" width="600"/>
-</div>
-
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white" alt="Python 3.8+">
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="License MIT">
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey" alt="Platform">
+  <img src="assets/banner.png" alt="Temodar Agent Banner" width="900" />
 </p>
 
-WP-Hunter is a **WordPress plugin/theme reconnaissance and static analysis (SAST) tool**. It is designed for **security researchers** to evaluate the **vulnerability probability** of plugins by analyzing metadata, installation patterns, update histories, and performing deep **Semgrep-powered source code analysis**.
+<h1 align="center">Temodar Agent</h1>
 
-## 🚀 Key Features
+<p align="center">
+  <img src="https://img.shields.io/badge/Docker-Required-2496ED?logo=docker&logoColor=white" alt="Docker Required">
+  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Analysis-AI--Agent%20%2B%20Semgrep-FF6B35" alt="AI-Agent + Semgrep">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License MIT">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey" alt="Platform">
+</p>
 
-*   **Real-time Web Dashboard**: A modern FastAPI-powered interface for visual scanning and analysis.
-*   **Deep SAST Integration**: Integrated **Semgrep** scanning with custom rule support.
-*   **Offline Recon**: Sync the entire WordPress plugin catalog to a local SQLite database for instant querying.
-*   **Risk Scoring (VPS)**: Heuristic-based scoring to identify the "low hanging fruit" in the WordPress ecosystem.
-*   **Theme Analysis**: Support for scanning the WordPress theme repository.
-*   **Security Hardened**: Built-in SSRF protection and safe execution patterns.
+<p align="center">
+  <b>AI agent-powered WordPress security scanner</b> for plugin and theme triage, Semgrep analysis, and source-aware investigation workflows.
+</p>
 
----
+Temodar Agent is an <b>AI-powered WordPress plugin and theme security analysis platform</b> built for security researchers, product security teams, auditors, and defenders. It combines <b>AI agent workflows</b>, <b>multi-provider LLM orchestration</b>, <b>Semgrep-powered static analysis</b>, and <b>risk-based WordPress reconnaissance</b> in one local-first Docker application.
 
-## 🖥️ Modern Web Dashboard
+If you are looking for an <b>AI security scanner for WordPress plugins</b>, an <b>AI agent workflow for code review</b>, or a <b>Semgrep-based vulnerability triage platform</b>, Temodar Agent is designed to make that process faster, more structured, and easier to scale.
 
-WP-Hunter now features a powerful local dashboard for visual researchers.
-
-### Dashboard Gallery
+## Screenshots
 
 <table>
   <tr>
     <td width="50%">
-      <b>Main Interface</b><br>
-      Configure scan parameters with intuitive controls
+      <b>AI-assisted security dashboard</b><br>
+      Launch scans, prioritize targets, and review results from one interface
     </td>
     <td width="50%">
-      <b>Scan History</b><br>
-      Track and manage all your previous scans
+      <b>Semgrep + AI investigation workflow</b><br>
+      Move from static analysis to source-aware AI review without losing context
     </td>
   </tr>
   <tr>
     <td>
-      <img src="assets/screenshots/dashboard-main.png" alt="Main Dashboard" width="100%"/>
+      <img src="assets/scr/1.jpeg" alt="Temodar Agent AI security dashboard" width="100%" />
     </td>
     <td>
-      <img src="assets/screenshots/scan-history.png" alt="Scan History" width="100%"/>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <b>Scan Details with Semgrep</b><br>
-      Deep SAST analysis with issue tracking
-    </td>
-    <td width="50%">
-      <b>Security Rulesets</b><br>
-      Manage OWASP and custom Semgrep rules
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <img src="assets/screenshots/scan-details.png" alt="Scan Details" width="100%"/>
-    </td>
-    <td>
-      <img src="assets/screenshots/security-rulesets.png" alt="Security Rulesets" width="100%"/>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <b>CLI Output</b><br>
-      Rich terminal interface with vulnerability intelligence
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <img src="assets/screenshots/cli-output.png" alt="CLI Output" width="100%"/>
+      <img src="assets/scr/2.jpeg" alt="Temodar Agent Semgrep and AI analysis workflow" width="100%" />
     </td>
   </tr>
 </table>
 
-### Dashboard Capabilities:
-*   **Real-time Execution Sequence**: Watch scan results stream in via WebSockets.
-*   **Integrated Semgrep**: Run deep static analysis on specific plugins with one click.
-*   **Scan History**: Save and compare previous scan sessions.
-*   **Favorites System**: Track "interesting" targets for further manual review.
-*   **Custom Rules**: Add and manage your own Semgrep security rules directly from the UI.
+## What Temodar Agent Does
 
----
+Temodar Agent helps teams identify which WordPress plugins and themes deserve attention first, run repeatable code analysis, and continue investigation with AI agent systems that stay attached to the target under review.
 
-## 📦 Installation
+Core platform capabilities include:
+- WordPress plugin and theme scanning
+- risk-based target prioritization
+- Semgrep-powered static application security testing
+- AI agent-assisted investigation threads
+- multi-provider AI configuration and execution
+- custom Semgrep rule management
+- local result persistence and historical review
 
-### Prerequisites
-- Python 3.8 or higher
-- pip (Python package installer)
-- Semgrep is installed automatically with `pip install -r requirements.txt` on Python 3.10+
+## AI Agent Capabilities
 
-### Setup
-1. Clone the repository:
+Temodar Agent is built around an <b>AI agent workflow</b> rather than a simple chat box.
+
+### Source-aware AI investigation
+- Open dedicated <b>AI threads per plugin or per theme</b>
+- Prepare a trusted source workspace for the selected target before deeper review
+- Keep thread-level context attached to the investigation, including:
+  - conversation summary
+  - analysis summary
+  - findings summary
+  - architecture notes
+  - important files
+  - last prepared source path
+
+### Multi-agent and execution strategy support
+The current runtime supports multiple AI execution strategies that are already exposed in the application:
+- <b>agent</b>
+- <b>team</b>
+- <b>tasks</b>
+- <b>fanout</b>
+- <b>auto</b>
+
+This makes Temodar Agent suitable for teams that want to move from a single-agent workflow to more advanced <b>multi-agent analysis patterns</b> inside the same product.
+
+### AI run control and orchestration
+The platform also supports:
+- custom `agents` payloads
+- custom `tasks` payloads
+- fanout configuration
+- loop detection settings
+- trace and runtime event streaming
+- before-run and after-run hook payloads
+- manual approval mode
+- auto-approve mode
+- structured AI output when an output schema is provided
+
+## Multi-Provider AI System
+
+Temodar Agent includes a <b>multi-provider AI configuration system</b> with stored profiles, active profile switching, and connection testing.
+
+Supported providers currently present in the application:
+- <b>Anthropic</b>
+- <b>OpenAI</b>
+- <b>Copilot</b>
+- <b>Gemini</b>
+- <b>Grok</b>
+
+Provider system features already implemented:
+- multiple saved provider profiles
+- active provider switching
+- model selection per profile
+- model list storage per profile
+- provider connection testing
+- optional custom base URL support
+- masked API key handling in the UI layer
+
+## Semgrep Security Analysis
+
+Temodar Agent includes a production-oriented <b>Semgrep analysis workflow</b> for WordPress source code review.
+
+### Built-in Semgrep coverage
+The current application ships with support for these default Semgrep rulesets:
+- <b>OWASP Top 10</b>
+- <b>PHP security</b>
+- <b>security audit</b>
+
+### Custom rule and ruleset management
+The current Semgrep system also supports:
+- custom Semgrep rule creation
+- custom rule deletion
+- rule enable / disable toggling
+- bulk enable / disable operations
+- ruleset add / remove / toggle actions
+- validation of custom rule documents
+- bulk Semgrep scanning across a scan session
+- persistent local storage for Semgrep outputs
+
+This makes Temodar Agent useful not only as an <b>AI security research tool</b>, but also as a <b>Semgrep operations layer</b> for teams that maintain their own detection logic.
+
+## WordPress Security Triage and Prioritization
+
+Temodar Agent helps security teams reduce noise before manual review starts.
+
+The scanning system can:
+- scan WordPress plugins or themes from public sources
+- filter by install counts and update windows
+- identify abandoned or user-facing targets
+- prioritize packages using metadata, tags, and security-related signals
+- assign relative risk labels for faster triage
+- stream progress to the dashboard in real time
+- store scan sessions for later comparison and follow-up
+
+## Why Teams Use Temodar Agent
+
+Temodar Agent is designed for organizations that want:
+- a faster way to review large WordPress plugin ecosystems
+- an <b>AI agent layer</b> on top of source code analysis
+- a bridge between Semgrep findings and human investigation
+- reusable investigation memory per target
+- a local-first workflow for security research and internal review
+
+## Requirements
+
+Temodar Agent is designed to run with <b>Docker</b>.
+
+You need:
+- <b>Docker</b> installed and running
+- permission to run Docker commands on your machine
+
+Useful links:
+- [Download Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Docker Engine installation guide](https://docs.docker.com/engine/install/)
+- [Docker documentation](https://docs.docker.com/)
+
+## Installation
+
+### 1. Clone the repository
+
 ```bash
 git clone https://github.com/xeloxa/WP-Hunter.git
 cd WP-Hunter
 ```
-2. Create and activate a virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
 
-## 🛠️ Usage
+### 2. Start Temodar Agent
 
-### 1. Start WP-Hunter (Docker + Web UI)
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
-Access the interface at `http://127.0.0.1:8080`.
 
-### 2. Run Scans from Dashboard
-- Configure scan filters in **NEW SCAN**.
-- Click **RUN SCAN**.
-- Open plugin details for Semgrep audit actions.
+The launcher script automatically:
+- builds the Docker image if needed
+- starts the Temodar Agent container
+- exposes the dashboard on port **8080**
+- mounts persistent local directories for app state, plugin cache, and Semgrep results
+- starts the host-side update watcher used by the app
 
----
+Open the dashboard at:
+- [http://127.0.0.1:8080](http://127.0.0.1:8080)
 
-## 🎯 Hunter Strategies
+## Data Persistence
 
-### 1. The "Zombie" Hunt (High Success Rate)
-Target plugins that are widely used but abandoned.
-*   **Logic:** Legacy code often lacks modern security standards (missing nonces, weak sanitization).
-*   **Dashboard Preset:** Enable `Abandoned`, keep `Min Installs` high, and sort by update freshness.
+Temodar Agent keeps important data on your host machine:
+- `./.temodar-agent` — app state and local database
+- `./Plugins` — downloaded plugin and theme cache
+- `./semgrep_results` — Semgrep scan outputs
 
-### 2. The "Aggressive" Mode
-For high-speed, high-concurrency reconnaissance across large scopes.
-*   **Dashboard Preset:** Increase `Pages`, keep `Limit` high/zero, and enable `Smart Mode`.
+## Typical Workflow
 
-### 3. The "Complexity" Trap
-Target complex functionality (File Uploads, Payments) in mid-range plugins.
-*   **Dashboard Preset:** Enable `Smart Mode`, set a moderate install range, then run Semgrep audit from plugin details.
+1. Start Temodar Agent with `./run.sh`
+2. Open the local dashboard
+3. Launch a WordPress plugin or theme scan
+4. Review risk labels and prioritized targets
+5. Run Semgrep on a selected target or across a session
+6. Open an AI thread for source-aware follow-up analysis
+7. Continue investigation with stored context, thread memory, and runtime events
 
----
+## Runtime Controls
 
-## 📊 VPS Logic (Vulnerability Probability Score)
+While `run.sh` is active:
+- Press **R** to rebuild and restart everything
+- Press **Q** to stop the app
+- Press **Ctrl+C** to exit
 
-The score (0-100) reflects the likelihood of **unpatched** or **unknown** vulnerabilities:
+## Star History
 
-| Metric | Condition | Impact | Reasoning |
-|--------|-----------|--------|-----------|
-| **Code Rot** | > 2 Years Old | **+40 pts** | Abandoned code is a critical risk. |
-| **Attack Surface** | Risky Tags | **+30 pts** | Payment, Upload, SQL, Forms are high complexity. |
-| **Neglect** | Support < 20% | **+15 pts** | Developers ignoring users likely ignore security reports. |
-| **Code Analysis** | Dangerous Funcs | **+5-25 pts** | Presence of `eval()`, `exec()`, or unprotected AJAX. |
-| **Tech Debt** | Outdated WP | **+15 pts** | Not tested with the latest WordPress core. |
-| **Maintenance** | Update < 14d | **-5 pts** | Active developers are a positive signal. |
+<p align="center">
+  <a href="https://www.star-history.com/#xeloxa/WP-Hunter&type=Date&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xeloxa/WP-Hunter&type=Date&theme=dark&legend=top-left" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xeloxa/WP-Hunter&type=Date&legend=top-left" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=xeloxa/WP-Hunter&type=Date&theme=dark&legend=top-left" />
+    </picture>
+  </a>
+</p>
 
----
+## Legal Disclaimer
 
-## ⚖️ Legal Disclaimer
+This project is intended for <b>authorized security research, defensive analysis, and educational use only</b>. It is designed to help researchers and developers assess WordPress plugin and theme attack surfaces, prioritize risky targets, and review code more efficiently.
 
-This tool is designed for **security research and authorized reconnaissance** purposes only. It is intended to assist security professionals and developers in assessing attack surfaces and evaluating plugin health. The authors are not responsible for any misuse. Always ensure you have appropriate authorization before performing any security-related activities.
+Do <b>not</b> use this software against systems, plugins, themes, or environments you do not own or do not have explicit permission to test. The author and contributors are <b>not responsible</b> for misuse, damage, service disruption, data loss, or any legal consequences resulting from improper use.
 
-## 📄 Licensing Notes
-
-- WP-Hunter is licensed under MIT (`LICENSE`).
-- Semgrep is used as a third-party scanner and keeps its own `LGPL-2.1` license.
-- See `THIRD_PARTY_LICENSES.md` for details.
-- Canonical LGPL text is included at `licenses/LGPL-2.1.txt`.
-- Docker image redistributes license artifacts under `/licenses`.
-
----
-
-<a href="https://www.star-history.com/#xeloxa/wp-hunter&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xeloxa/wp-hunter&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xeloxa/wp-hunter&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=xeloxa/wp-hunter&type=date&legend=top-left" />
- </picture>
-</a>
+Always ensure your testing is authorized and compliant with applicable laws, regulations, and disclosure policies.

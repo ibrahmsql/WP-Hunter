@@ -1,20 +1,20 @@
 # Semgrep security scanner for WordPress plugins
 
 import json
+import re
 import subprocess
+import tempfile
 import threading
-import yaml
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from infrastructure.semgrep_runtime import (
-    get_semgrep_command,
-    semgrep_install_hint,
-)
+import yaml
+
+from infrastructure.semgrep_runtime import get_semgrep_command, semgrep_install_hint
 
 
-# Official Semgrep Registry Rulesets + WP-Hunter Core
+# Official Semgrep Registry Rulesets + Temodar Agent Core
 SEMGREP_REGISTRY_RULESETS = {
     "owasp-top-ten": {
         "config": "p/owasp-top-ten",
@@ -35,7 +35,6 @@ SEMGREP_REGISTRY_RULESETS = {
 
 # Default enabled rulesets
 DEFAULT_ENABLED_RULESETS = ["owasp-top-ten", "php-security", "security-audit"]
-
 
 # Community rule sources for user reference
 SEMGREP_COMMUNITY_SOURCES = [
@@ -61,10 +60,28 @@ SEMGREP_COMMUNITY_SOURCES = [
     },
 ]
 
+SEMGREP_TIMEOUT_SECONDS = 60
+SAFE_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+DANGEROUS_PATH_CHARS = [";", "&", "|", "`", "$", "(", ")", "<", ">", "\n", "\r"]
+
 
 @dataclass
 class SemgrepResult:
     slug: str
+    findings: List[Dict[str, Any]]
+    errors: List[str]
+    success: bool
+
+
+@dataclass
+class SemgrepTarget:
+    slug: str
+    plugin_target_path: str
+    output_file: Path
+
+
+@dataclass
+class SemgrepExecutionResult:
     findings: List[Dict[str, Any]]
     errors: List[str]
     success: bool
@@ -84,240 +101,333 @@ class SemgrepScanner:
         self.workers = workers
         self.stop_event = threading.Event()
         self.use_registry_rules = use_registry_rules
-        # Default to OWASP + PHP + Security Audit rulesets
         self.registry_rulesets = registry_rulesets or DEFAULT_ENABLED_RULESETS
         self.semgrep_command = get_semgrep_command()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _filter_custom_rules(self) -> Optional[str]:
-        """Create a temporary custom rules file with disabled rules removed."""
-        custom_candidates = [
-            self.output_dir / "custom_rules.yaml",
-            Path("./semgrep_results/custom_rules.yaml"),
-            Path(__file__).resolve().parents[1]
-            / "semgrep_results"
-            / "custom_rules.yaml",
-        ]
-        custom_file = next((p for p in custom_candidates if p.exists()), None)
-        if not custom_file:
-            return None
+    def _result(self, slug: str, *, findings: Optional[List[Dict[str, Any]]] = None, errors: Optional[List[str]] = None, success: bool = False) -> SemgrepResult:
+        """Create a normalized Semgrep result payload."""
+        return SemgrepResult(
+            slug=slug,
+            findings=findings or [],
+            errors=errors or [],
+            success=success,
+        )
 
-        disabled_ids = set()
+    def _load_disabled_rule_ids(self) -> set[str]:
+        """Load disabled custom rule IDs from legacy and current config locations."""
+        disabled_ids: set[str] = set()
 
-        # Legacy per-output disabled rules format: ["rule-id", ...]
         legacy_disabled_file = self.output_dir / "disabled_rules.json"
         if legacy_disabled_file.exists():
             try:
-                with open(legacy_disabled_file, "r") as f:
-                    loaded = json.load(f)
-                    if isinstance(loaded, list):
-                        disabled_ids.update(loaded)
+                with open(legacy_disabled_file, "r") as file_handle:
+                    loaded = json.load(file_handle)
+                if isinstance(loaded, list):
+                    disabled_ids.update(str(item) for item in loaded)
             except Exception:
                 pass
 
-        # Current shared UI format: {"rules": [...], "rulesets": [...]}
         shared_disabled_file = Path("./semgrep_results/disabled_config.json")
         if shared_disabled_file.exists():
             try:
-                with open(shared_disabled_file, "r") as f:
-                    loaded = json.load(f)
-                    if isinstance(loaded, dict):
-                        disabled_ids.update(loaded.get("rules", []))
+                with open(shared_disabled_file, "r") as file_handle:
+                    loaded = json.load(file_handle)
+                if isinstance(loaded, dict):
+                    disabled_ids.update(str(item) for item in loaded.get("rules", []))
             except Exception:
                 pass
 
+        return disabled_ids
+
+    def _resolve_custom_rules_file(self) -> Optional[Path]:
+        """Find the best available custom rules file candidate."""
+        custom_candidates = [
+            self.output_dir / "custom_rules.yaml",
+            Path("./semgrep_results/custom_rules.yaml"),
+            Path(__file__).resolve().parents[1] / "semgrep_results" / "custom_rules.yaml",
+        ]
+        return next((path for path in custom_candidates if path.exists()), None)
+
+    def _validate_custom_rule(self, rule: Dict[str, Any]) -> bool:
+        """Return whether an individual custom rule passes Semgrep validation."""
+        if not self.semgrep_command:
+            return True
+
+        temp_path = None
         try:
-            with open(custom_file, "r") as f:
-                rules_data = yaml.safe_load(f)
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+            ) as tmp:
+                yaml.dump({"rules": [rule]}, tmp, default_flow_style=False, sort_keys=False)
+                temp_path = tmp.name
 
-            if rules_data and "rules" in rules_data:
-                active_rules = [
-                    r for r in rules_data["rules"] if r.get("id") not in disabled_ids
-                ]
-
-                if not active_rules:
-                    return None
-
-                filtered_data = {"rules": active_rules}
-                filtered_file = self.output_dir / "active_custom_rules.yaml"
-                with open(filtered_file, "w") as f:
-                    yaml.dump(
-                        filtered_data, f, default_flow_style=False, sort_keys=False
-                    )
-                return str(filtered_file)
+            result = subprocess.run(
+                [*self.semgrep_command, "--validate", "--config", temp_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            return result.returncode == 0
         except Exception:
-            return str(custom_file)  # Fallback to original
+            return False
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    def _write_filtered_custom_rules(self, rules_data: Dict[str, Any], disabled_ids: set[str]) -> Optional[str]:
+        """Persist a filtered custom rules file with disabled or invalid rules removed."""
+        rules = rules_data.get("rules", [])
+        if not isinstance(rules, list):
+            return None
+
+        active_rules: List[Dict[str, Any]] = []
+        invalid_rule_ids: List[str] = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            rule_id = str(rule.get("id") or "")
+            if not rule_id or rule_id in disabled_ids:
+                continue
+            if self._validate_custom_rule(rule):
+                active_rules.append(rule)
+            else:
+                invalid_rule_ids.append(rule_id)
+
+        if invalid_rule_ids:
+            invalid_path = self.output_dir / "invalid_custom_rules.json"
+            with open(invalid_path, "w") as file_handle:
+                json.dump({"invalid_rule_ids": invalid_rule_ids}, file_handle)
+
+        if not active_rules:
+            return None
+
+        filtered_file = self.output_dir / "active_custom_rules.yaml"
+        with open(filtered_file, "w") as file_handle:
+            yaml.dump(
+                {"rules": active_rules},
+                file_handle,
+                default_flow_style=False,
+                sort_keys=False,
+            )
+        return str(filtered_file)
+
+    def _filter_custom_rules(self) -> Optional[str]:
+        """Create a temporary custom rules file with disabled rules removed."""
+        custom_file = self._resolve_custom_rules_file()
+        if not custom_file:
+            return None
+
+        disabled_ids = self._load_disabled_rule_ids()
+        try:
+            with open(custom_file, "r") as file_handle:
+                rules_data = yaml.safe_load(file_handle)
+            if rules_data and "rules" in rules_data:
+                return self._write_filtered_custom_rules(rules_data, disabled_ids)
+        except Exception:
+            return str(custom_file)
 
         return str(custom_file)
 
     def _get_config_args(self) -> List[str]:
         """Build config arguments for semgrep command."""
-        configs = []
+        config_values: List[str] = []
 
-        # 1. Custom user rules (filtered)
         filtered_custom = self._filter_custom_rules()
         if filtered_custom:
-            configs.extend(["--config", filtered_custom])
+            config_values.append(filtered_custom)
 
-        # 2. Registry rulesets (OWASP, PHP, etc.)
         if self.use_registry_rules:
             for ruleset_key in self.registry_rulesets:
-                # Resolve the config string from our map if it exists
-                if ruleset_key in SEMGREP_REGISTRY_RULESETS:
-                    config_val = SEMGREP_REGISTRY_RULESETS[ruleset_key]["config"]
-                    configs.extend(["--config", config_val])
-                else:
-                    # Otherwise use the value directly (e.g. if user supplied "p/ci")
-                    configs.extend(["--config", ruleset_key])
+                config_value = str(
+                    SEMGREP_REGISTRY_RULESETS.get(ruleset_key, {}).get(
+                        "config",
+                        ruleset_key,
+                    )
+                    or ""
+                ).strip()
+                if config_value:
+                    config_values.append(config_value)
 
+        deduped_configs = list(dict.fromkeys(config_values))
+        configs: List[str] = []
+        for config_value in deduped_configs:
+            configs.extend(["--config", config_value])
         return configs
 
-    def scan_plugin(self, plugin_path: str, slug: str) -> SemgrepResult:
-        # Security: Validate inputs
+    def _validate_scan_target(self, plugin_path: str, slug: str) -> SemgrepTarget | SemgrepResult:
+        """Validate user input and build a normalized scan target."""
         if not slug or not isinstance(slug, str):
-            return SemgrepResult(
-                slug=slug or "unknown",
-                findings=[],
-                errors=["Invalid slug"],
-                success=False,
-            )
+            return self._result(slug or "unknown", errors=["Invalid slug"])
 
-        # Security: Sanitize slug (alphanumeric, hyphens, underscores only)
-        import re
+        if not SAFE_SLUG_PATTERN.match(slug):
+            return self._result(slug, errors=["Invalid slug format"])
 
-        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
-            return SemgrepResult(
-                slug=slug, findings=[], errors=["Invalid slug format"], success=False
-            )
-
-        # Security: Validate plugin_path exists and is a directory
         path_obj = Path(plugin_path)
         if not path_obj.exists():
-            return SemgrepResult(
-                slug=slug,
-                findings=[],
-                errors=["Plugin path does not exist"],
-                success=False,
-            )
+            return self._result(slug, errors=["Plugin path does not exist"])
         if not path_obj.is_dir():
-            return SemgrepResult(
-                slug=slug,
-                findings=[],
-                errors=["Plugin path is not a directory"],
-                success=False,
-            )
+            return self._result(slug, errors=["Plugin path is not a directory"])
 
-        # Security: Prevent path traversal - ensure path is within expected directory
         try:
-            # Resolve to absolute path and check for path traversal
             resolved_path = path_obj.resolve()
             plugin_target_path = str(resolved_path)
-            # Ensure the path doesn't contain shell metacharacters
-            dangerous_chars = [
-                ";",
-                "&",
-                "|",
-                "`",
-                "$",
-                "(",
-                ")",
-                "<",
-                ">",
-                "\n",
-                "\r",
+            if any(char in plugin_target_path for char in DANGEROUS_PATH_CHARS):
+                return self._result(slug, errors=["Invalid characters in path"])
+        except Exception as exc:
+            return self._result(slug, errors=[f"Path validation error: {str(exc)}"])
+
+        return SemgrepTarget(
+            slug=slug,
+            plugin_target_path=plugin_target_path,
+            output_file=self.output_dir / f"{slug}_results.json",
+        )
+
+    def _build_scan_command(self, target: SemgrepTarget) -> List[str]:
+        """Build the full semgrep subprocess command."""
+        command = list(self.semgrep_command)
+        command.extend(self._get_config_args())
+        command.extend(
+            [
+                "--json",
+                "--output",
+                str(target.output_file),
+                "--no-git-ignore",
+                target.plugin_target_path,
             ]
-            if any(c in plugin_target_path for c in dangerous_chars):
-                return SemgrepResult(
-                    slug=slug,
-                    findings=[],
-                    errors=["Invalid characters in path"],
-                    success=False,
-                )
-        except Exception as e:
-            return SemgrepResult(
-                slug=slug,
+        )
+        return command
+
+    def _is_non_fatal_semgrep_error(self, message: str) -> bool:
+        """Return whether a Semgrep error message is non-fatal for the overall scan."""
+        normalized = str(message or "").lower()
+        non_fatal_markers = [
+            "syntax error",
+            "parse error",
+            "partial parsing",
+            "could not parse",
+            "was unexpected",
+        ]
+        return any(marker in normalized for marker in non_fatal_markers)
+
+    def _parse_output_file(self, output_file: Path, stderr: str) -> SemgrepExecutionResult:
+        """Parse semgrep JSON output file."""
+        try:
+            with open(output_file, "r") as file_handle:
+                data = json.load(file_handle)
+        except json.JSONDecodeError:
+            return SemgrepExecutionResult(
                 findings=[],
-                errors=[f"Path validation error: {str(e)}"],
+                errors=[f"Invalid JSON output from Semgrep. Stderr: {stderr}"],
                 success=False,
             )
 
-        if self.stop_event.is_set():
-            return SemgrepResult(
-                slug=slug, findings=[], errors=["Stopped"], success=False
-            )
+        findings = data.get("results", [])
+        raw_errors = data.get("errors", [])
+        errors = [
+            str(error.get("message") or "").strip()
+            for error in raw_errors
+            if isinstance(error, dict) and str(error.get("message") or "").strip()
+        ]
+        stderr_text = str(stderr or "").strip()
 
-        output_file = self.output_dir / f"{slug}_results.json"
+        if errors:
+            non_fatal_errors = [error for error in errors if self._is_non_fatal_semgrep_error(error)]
+            fatal_errors = [error for error in errors if error not in non_fatal_errors]
 
-        try:
-            # Build command with all config sources
-            if not self.semgrep_command:
-                return SemgrepResult(
-                    slug=slug,
-                    findings=[],
-                    errors=[f"Semgrep not available. {semgrep_install_hint()}"],
+            if fatal_errors or not findings:
+                if stderr_text:
+                    errors.append(f"stderr: {stderr_text}")
+                return SemgrepExecutionResult(
+                    findings=findings if findings else [],
+                    errors=errors,
                     success=False,
                 )
 
-            cmd = list(self.semgrep_command)
-            cmd.extend(self._get_config_args())
-            cmd.extend(
-                [
-                    "--json",
-                    "--output",
-                    str(output_file),
-                    "--no-git-ignore",
-                    plugin_target_path,
-                ]
+            # Semgrep can report parser/syntax issues for some files while still producing
+            # valid findings for the rest of the target. Treat that as a successful scan
+            # so the UI can display the findings instead of showing a hard failure.
+            return SemgrepExecutionResult(
+                findings=findings,
+                errors=non_fatal_errors,
+                success=True,
             )
 
-            # Ensure output directory exists before running
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+        return SemgrepExecutionResult(
+            findings=findings,
+            errors=[],
+            success=True,
+        )
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # Reduced timeout to 60 seconds to prevent hanging
+    def _parse_subprocess_result(
+        self,
+        *,
+        output_file: Path,
+        returncode: int,
+        stderr: str,
+    ) -> SemgrepExecutionResult:
+        """Convert subprocess output into normalized findings/errors."""
+        if output_file.exists() and output_file.stat().st_size > 0:
+            return self._parse_output_file(output_file, stderr)
+
+        if returncode != 0:
+            return SemgrepExecutionResult(
+                findings=[],
+                errors=[f"Semgrep failed (code {returncode}): {stderr}"],
+                success=False,
             )
 
-            # Check return code. Semgrep returns 0 if clean, 1 if findings, >1 if error
-            # But recent versions return 0 even with findings unless --error is used
-            # We care if the output file was created and is valid JSON
+        return SemgrepExecutionResult(
+            findings=[],
+            errors=[f"No output file generated. Stderr: {stderr}"],
+            success=False,
+        )
 
-            findings = []
-            errors = []
-            parsing_success = False
-
-            if output_file.exists() and output_file.stat().st_size > 0:
-                try:
-                    with open(output_file, "r") as f:
-                        data = json.load(f)
-                        findings = data.get("results", [])
-                        # Semgrep errors are usually in 'errors' key
-                        errors = [e.get("message", "") for e in data.get("errors", [])]
-                        parsing_success = True
-                except json.JSONDecodeError:
-                    errors.append(
-                        f"Invalid JSON output from Semgrep. Stderr: {result.stderr}"
-                    )
-            else:
-                if result.returncode != 0:
-                    errors.append(
-                        f"Semgrep failed (code {result.returncode}): {result.stderr}"
-                    )
-                else:
-                    errors.append(f"No output file generated. Stderr: {result.stderr}")
-
-            return SemgrepResult(
-                slug=slug, findings=findings, errors=errors, success=parsing_success
+    def _execute_scan(self, target: SemgrepTarget) -> SemgrepExecutionResult:
+        """Run the semgrep subprocess and parse its output."""
+        if not self.semgrep_command:
+            return SemgrepExecutionResult(
+                findings=[],
+                errors=[f"Semgrep not available. {semgrep_install_hint()}"],
+                success=False,
             )
 
+        target.output_file.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            self._build_scan_command(target),
+            capture_output=True,
+            text=True,
+            timeout=SEMGREP_TIMEOUT_SECONDS,
+        )
+        return self._parse_subprocess_result(
+            output_file=target.output_file,
+            returncode=result.returncode,
+            stderr=result.stderr,
+        )
+
+    def scan_plugin(self, plugin_path: str, slug: str) -> SemgrepResult:
+        target = self._validate_scan_target(plugin_path, slug)
+        if isinstance(target, SemgrepResult):
+            return target
+
+        if self.stop_event.is_set():
+            return self._result(target.slug, errors=["Stopped"])
+
+        try:
+            execution_result = self._execute_scan(target)
+            return self._result(
+                target.slug,
+                findings=execution_result.findings,
+                errors=execution_result.errors,
+                success=execution_result.success,
+            )
         except subprocess.TimeoutExpired:
-            return SemgrepResult(
-                slug=slug, findings=[], errors=["Scan timeout"], success=False
-            )
-        except Exception as e:
-            return SemgrepResult(slug=slug, findings=[], errors=[str(e)], success=False)
+            return self._result(target.slug, errors=["Scan timeout"])
+        except Exception as exc:
+            return self._result(target.slug, errors=[str(exc)])
 
     def stop(self):
         self.stop_event.set()

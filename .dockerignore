@@ -11,5 +11,5 @@ __pycache__
 .tools
 Plugins
 semgrep_results
-wp_hunter.log
+temodar_agent.log
 *.log

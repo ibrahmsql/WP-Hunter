@@ -1,5 +1,5 @@
 """
-WP-Hunter VPS Scorer
+Temodar Agent VPS Scorer
 
 Vulnerability Probability Score calculation.
 """

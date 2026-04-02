@@ -1,17 +1,18 @@
 """
-WP-Hunter Theme Scanner
+Temodar Agent Theme Scanner
 
 Theme fetching and analysis from WordPress.org API.
 """
 
+import logging
 import time
 import threading
 from typing import List, Dict, Any, Optional, Callable
-from urllib.parse import quote_plus
-
-from config import Colors, RISKY_TAGS
+from config import RISKY_TAGS
 from infrastructure.http_client import get_session
 from utils.date_utils import calculate_days_ago
+
+logger = logging.getLogger("temodar_agent.scanners.theme")
 
 
 class ThemeScanner:
@@ -65,13 +66,11 @@ class ThemeScanner:
                     return data.get("themes", []) if data else []
                 elif response.status_code == 429:
                     wait_time = 5 * (attempt + 1)
-                    print(
-                        f"{Colors.YELLOW}[!] Rate limited, waiting {wait_time}s...{Colors.RESET}"
-                    )
+                    logger.warning("Theme API rate limited; waiting before retry", extra={"wait_time_seconds": wait_time, "page": page})
                     time.sleep(wait_time)
                     continue
             except Exception as e:
-                print(f"{Colors.RED}[!] Theme API Error: {e}{Colors.RESET}")
+                logger.warning("Theme API request failed", exc_info=e)
                 time.sleep(2)
                 continue
         return []
@@ -108,14 +107,6 @@ class ThemeScanner:
             "HIGH" if risk_score >= 40 else ("MEDIUM" if risk_score >= 20 else "LOW")
         )
 
-        google_dork_query = (
-            f'"{slug}" '
-            f'intext:"{slug}" '
-            f'("wordpress theme" OR "wp theme" OR "wordpress.org/themes/{slug}") '
-            f"(vulnerability OR exploit OR cve) "
-            f'-"wordpress plugin" -"plugins/"'
-        )
-
         return {
             "name": name,
             "slug": slug,
@@ -130,10 +121,7 @@ class ThemeScanner:
             "wp_org_link": f"https://wordpress.org/themes/{slug}/",
             "trac_link": f"https://themes.trac.wordpress.org/log/{slug}/",
             "wpscan_link": f"https://wpscan.com/theme/{slug}",
-            "patchstack_link": f"https://patchstack.com/database?search={slug}",
-            "wordfence_link": f"https://www.wordfence.com/threat-intel/vulnerabilities/search?search={slug}",
             "cve_search_link": f"https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword={slug}",
-            "google_dork_link": f"https://www.google.com/search?q={quote_plus(google_dork_query)}",
             "screenshot_url": theme.get("screenshot_url", ""),
         }
 

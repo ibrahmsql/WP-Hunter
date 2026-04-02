@@ -1,21 +1,23 @@
 """
-WP-Hunter Plugin Downloader
+Temodar Agent Plugin Downloader
 
 Download and extract plugins for analysis.
 """
 
-import socket
 import ipaddress
-from urllib.parse import urlparse, urljoin
+import logging
 import os
-import zipfile
-import shutil
 import re
+import shutil
+import socket
+import zipfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
-from config import Colors
 from infrastructure.http_client import get_session
+
+logger = logging.getLogger("temodar_agent.downloaders.plugin")
 
 
 class PluginDownloader:
@@ -162,6 +164,75 @@ class PluginDownloader:
         if total_uncompressed > self.MAX_TOTAL_UNCOMPRESSED_SIZE:
             raise ValueError("ZIP archive uncompressed size exceeds safety limits")
 
+    def _download_zip_with_validated_redirects(self, *, session, download_url: str, zip_path: Path) -> None:
+        current_url = download_url
+        final_response = None
+
+        for _ in range(self.MAX_REDIRECTS):
+            self._validate_url(current_url)
+            response = session.get(
+                current_url,
+                stream=True,
+                timeout=60,
+                allow_redirects=False,
+            )
+            if response.is_redirect:
+                location = response.headers["Location"]
+                current_url = (
+                    urljoin(current_url, location)
+                    if not urlparse(location).netloc
+                    else location
+                )
+                continue
+            final_response = response
+            break
+        else:
+            raise ValueError("Too many redirects")
+
+        if not final_response:
+            raise ValueError("No response received")
+
+        final_response.raise_for_status()
+        total_downloaded = 0
+        with open(zip_path, "wb") as file_handle:
+            for chunk in final_response.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                total_downloaded += len(chunk)
+                if total_downloaded > self.MAX_ZIP_DOWNLOAD_SIZE:
+                    raise ValueError("ZIP archive exceeds download size limit")
+                file_handle.write(chunk)
+
+    def _extract_archive(self, *, zip_path: Path, extract_path: Path) -> None:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            self._validate_zip_archive(zip_ref)
+            extract_base = extract_path.resolve()
+            for member in zip_ref.infolist():
+                member_path = (extract_path / member.filename).resolve()
+                if os.path.commonpath([str(extract_base), str(member_path)]) != str(
+                    extract_base
+                ):
+                    raise Exception(f"Zip Slip attempt detected: {member.filename}")
+                zip_ref.extract(member, extract_path)
+
+    def _normalize_extracted_directory(self, extract_path: Path) -> None:
+        children = list(extract_path.iterdir())
+        if len(children) != 1 or not children[0].is_dir():
+            return
+        temp_dir = extract_path.parent / "temp"
+        children[0].rename(temp_dir)
+        shutil.rmtree(extract_path)
+        temp_dir.rename(extract_path)
+
+    def _cleanup_failed_download(self, *, plugin_dir: Optional[Path]) -> None:
+        if not plugin_dir or not plugin_dir.exists():
+            return
+        try:
+            self._ensure_within_base(plugin_dir, self.plugins_dir)
+            shutil.rmtree(plugin_dir, ignore_errors=True)
+        except Exception:
+            pass
+
     def download_and_extract(
         self, download_url: str, slug: str, verbose: bool = True
     ) -> Optional[Path]:
@@ -186,99 +257,43 @@ class PluginDownloader:
             if zip_path.exists():
                 zip_path.unlink()
 
-            # Download
             if verbose:
-                print(f"{Colors.CYAN}[⬇] Downloading {safe_slug}...{Colors.RESET}")
-
-            # Follow redirects manually with validation
-            current_url = download_url
-            final_response = None
-
-            for _ in range(self.MAX_REDIRECTS):
-                self._validate_url(current_url)
-
-                response = session.get(
-                    current_url, stream=True, timeout=60, allow_redirects=False
-                )
-
-                if response.is_redirect:
-                    location = response.headers["Location"]
-                    # Handle relative redirects
-                    if not urlparse(location).netloc:
-                        current_url = urljoin(current_url, location)
-                    else:
-                        current_url = location
-                    continue
-                else:
-                    final_response = response
-                    break
-            else:
-                raise ValueError("Too many redirects")
-
-            if not final_response:
-                raise ValueError("No response received")
-
-            final_response.raise_for_status()
-
-            total_downloaded = 0
-            with open(zip_path, "wb") as f:
-                for chunk in final_response.iter_content(chunk_size=8192):
-                    if not chunk:
-                        continue
-                    total_downloaded += len(chunk)
-                    if total_downloaded > self.MAX_ZIP_DOWNLOAD_SIZE:
-                        raise ValueError("ZIP archive exceeds download size limit")
-                    f.write(chunk)
-
-            # Extract
-            if verbose:
-                print(f"{Colors.CYAN}[📦] Extracting {safe_slug}...{Colors.RESET}")
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                self._validate_zip_archive(zip_ref)
-                # Zip Slip mitigation
-                for member in zip_ref.infolist():
-                    member_path = (extract_path / member.filename).resolve()
-                    extract_base = extract_path.resolve()
-                    if os.path.commonpath([str(extract_base), str(member_path)]) != str(
-                        extract_base
-                    ):
-                        raise Exception(f"Zip Slip attempt detected: {member.filename}")
-                    zip_ref.extract(member, extract_path)
-
-            # Clean up zip
-            zip_path.unlink()
-
-            # Normalize directory structure
-            children = list(extract_path.iterdir())
-            if len(children) == 1 and children[0].is_dir():
-                # Move contents up one level
-                temp_dir = extract_path.parent / "temp"
-                children[0].rename(temp_dir)
-                shutil.rmtree(extract_path)
-                temp_dir.rename(extract_path)
+                logger.info("Downloading plugin source", extra={"slug": safe_slug})
+            self._download_zip_with_validated_redirects(
+                session=session,
+                download_url=download_url,
+                zip_path=zip_path,
+            )
 
             if verbose:
-                file_count = sum(1 for _ in extract_path.rglob("*") if _.is_file())
-                print(
-                    f"{Colors.GREEN}[✓] Extracted {safe_slug}: {file_count} files{Colors.RESET}"
+                logger.info("Extracting plugin source", extra={"slug": safe_slug})
+            self._extract_archive(zip_path=zip_path, extract_path=extract_path)
+
+            zip_path.unlink(missing_ok=True)
+            self._normalize_extracted_directory(extract_path)
+
+            if verbose:
+                file_count = sum(1 for candidate in extract_path.rglob("*") if candidate.is_file())
+                logger.info(
+                    "Extracted plugin source",
+                    extra={"slug": safe_slug, "file_count": file_count},
                 )
 
             return extract_path
 
         except zipfile.BadZipFile:
             if verbose:
-                print(f"{Colors.RED}[!] Invalid ZIP file for {slug}{Colors.RESET}")
+                logger.warning("Invalid ZIP file for plugin", extra={"slug": slug})
             if zip_path and zip_path.exists():
                 zip_path.unlink()
             return None
-        except Exception as e:
+        except Exception as exc:
             if verbose:
-                print(f"{Colors.RED}[!] Failed to download {slug}: {e}{Colors.RESET}")
-            if plugin_dir and plugin_dir.exists():
-                try:
-                    self._ensure_within_base(plugin_dir, self.plugins_dir)
-                    shutil.rmtree(plugin_dir, ignore_errors=True)
-                except Exception:
-                    pass
+                logger.warning(
+                    "Failed to download plugin source",
+                    extra={"slug": slug},
+                    exc_info=exc,
+                )
+            self._cleanup_failed_download(plugin_dir=plugin_dir)
             return None
 

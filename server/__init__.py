@@ -1,4 +1,4 @@
-"""WP-Hunter Server package."""
+"""Temodar Agent Server package."""
 
 
 def create_app():

@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from server import update_manager
 
 router = APIRouter(prefix="/api/system", tags=["system"])
-logger = logging.getLogger("wp_hunter.update.router")
+logger = logging.getLogger("temodar_agent.update.router")
 
 
 @router.get("/update")
@@ -29,7 +29,7 @@ async def get_update_status(force: bool = False):
 
 @router.post("/update")
 async def trigger_update():
-    """Start downloading and applying the latest GitHub release."""
+    """Queue a Docker-managed source update, rebuild, and container restart."""
     try:
         message = await asyncio.to_thread(update_manager.manager.start_update)
         return {"status": "started", "message": message}
