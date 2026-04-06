@@ -16,7 +16,6 @@ from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from requests.adapters import HTTPAdapter
-from urllib3.util.connection import allowed_gai_family
 
 from infrastructure.http_client import get_session
 
@@ -66,7 +65,7 @@ class PluginDownloader:
             Tuple of (hostname, list_of_validated_ip_strings)
 
         Blocks:
-        - Non-HTTPS schemes (HTTP is no longer accepted)
+        - Non-HTTP(S) schemes
         - Loopback addresses (127.0.0.0/8, ::1)
         - Private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
         - Link-local addresses (169.254.0.0/16, fe80::/10)
@@ -208,7 +207,9 @@ class PluginDownloader:
                     request.headers["Host"] = self._pinned_host
                 return super().send(request, **kwargs)
 
-        pinned_session = get_session()
+        # Create an independent session so we don't mutate the shared one.
+        import requests as _requests
+        pinned_session = _requests.Session()
         adapter = PinnedAdapter(hostname, pinned_ip)
         pinned_session.mount("https://", adapter)
         pinned_session.mount("http://", adapter)
