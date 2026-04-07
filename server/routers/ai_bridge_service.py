@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -8,7 +7,7 @@ from ai.tool_policy import build_tool_policy
 # Keys that are safe to include in the bridge JSON payload.
 # NOTE: apiKey is intentionally excluded to prevent credential leakage
 # through logs, crash dumps, or error messages. The runner process
-# receives the API key via the TEMODAR_AI_API_KEY environment variable.
+# receives the API key via the child process environment only.
 RUNNER_ALLOWED_KEYS = {
     "workspaceRoot",
     "prompt",
@@ -36,6 +35,7 @@ RUNNER_ALLOWED_KEYS = {
     "approvalControlPath",
     "beforeRun",
     "afterRun",
+    "runtimeEnv",
 }
 
 
@@ -110,10 +110,10 @@ def build_bridge_payload(
 ) -> Dict[str, Any]:
     del source_dir
 
-    # Pass API key via environment variable to prevent accidental logging.
+    runtime_env: Dict[str, str] = {}
     api_key = active_provider.get("api_key") or ""
     if api_key:
-        os.environ["TEMODAR_AI_API_KEY"] = str(api_key)
+        runtime_env["TEMODAR_AI_API_KEY"] = str(api_key)
 
     bridge_payload: Dict[str, Any] = {
         "workspaceRoot": str(workspace_root.resolve()),
@@ -149,5 +149,6 @@ def build_bridge_payload(
         "approvalControlPath": approval_control_path or None,
         "beforeRun": before_run or None,
         "afterRun": after_run or None,
+        "runtimeEnv": runtime_env or None,
     }
     return filter_runner_payload(bridge_payload)

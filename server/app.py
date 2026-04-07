@@ -31,9 +31,7 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 ALLOWED_HOST_SET = set(ALLOWED_HOSTS)
 STATIC_DIR = Path(__file__).parent / "static"
 
-# Auth token: read from env or generate a random one on first startup.
 _AUTH_TOKEN = os.environ.get("TEMODAR_AUTH_TOKEN", "").strip()
-# Paths that do NOT require authentication (static assets, health, root page).
 _PUBLIC_PATH_PREFIXES = ("/static", "/assets", "/docs", "/openapi.json", "/redoc")
 _PUBLIC_EXACT_PATHS = {"/", "/health"}
 
@@ -65,27 +63,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Bearer token authentication for API endpoints.
-
-    When TEMODAR_AUTH_TOKEN is set, all /api/* endpoints require
-    Authorization: Bearer <token>.  Static assets and the root page
-    are exempt so the dashboard can still load.
-    """
+    """Bearer token authentication for API endpoints."""
 
     async def dispatch(self, request: Request, call_next):
         if not _AUTH_TOKEN:
-            # No token configured — skip auth (local-only default)
             return await call_next(request)
 
         path = request.url.path
-
-        # Allow public paths through without auth
         if path in _PUBLIC_EXACT_PATHS:
             return await call_next(request)
         if any(path.startswith(prefix) for prefix in _PUBLIC_PATH_PREFIXES):
             return await call_next(request)
 
-        # All /api/* and /ws/* paths require auth
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
             return PlainTextResponse("Unauthorized", status_code=401)
@@ -95,6 +84,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return PlainTextResponse("Forbidden", status_code=403)
 
         return await call_next(request)
+
+
+
+def websocket_has_valid_auth(websocket: WebSocket) -> bool:
+    if not _AUTH_TOKEN:
+        return True
+    auth_header = websocket.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return False
+    return secrets.compare_digest(auth_header[7:], _AUTH_TOKEN)
+
 
 
 def setup_logging():
@@ -112,6 +112,7 @@ def setup_logging():
     logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     setup_logging()
@@ -126,19 +127,19 @@ def create_app() -> FastAPI:
     return app
 
 
+
 def configure_application(app: FastAPI) -> None:
     """Apply middleware, routes, startup wiring, and static mounts."""
     app.state.update_manager = update_manager.manager
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-    # Security middlewares (order matters: outermost runs first)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
+        allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
         allow_credentials=False,
@@ -158,12 +159,14 @@ def configure_application(app: FastAPI) -> None:
     register_scan_websocket(app)
 
 
+
 def warmup_update_manager() -> None:
     """Warm up release status cache without failing app startup."""
     try:
         update_manager.manager.get_status(force=False)
     except Exception:
         logger.warning("Startup release warmup failed.", exc_info=True)
+
 
 
 def register_routers(app: FastAPI) -> None:
@@ -179,6 +182,7 @@ def register_routers(app: FastAPI) -> None:
         app.include_router(router)
 
 
+
 def mount_static_directories(app: FastAPI, static_dir: Path) -> None:
     """Mount static and asset directories if present."""
     if static_dir.exists():
@@ -187,6 +191,7 @@ def mount_static_directories(app: FastAPI, static_dir: Path) -> None:
     assets_dir = static_dir / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
 
 
 def register_root_route(app: FastAPI, static_dir: Path) -> None:
@@ -201,6 +206,7 @@ def register_root_route(app: FastAPI, static_dir: Path) -> None:
         return HTMLResponse("<h1>Temodar Agent Dashboard</h1><p>Static files not found.</p>")
 
 
+
 def register_scan_websocket(app: FastAPI) -> None:
     """Register scan progress WebSocket endpoint."""
 
@@ -210,6 +216,9 @@ def register_scan_websocket(app: FastAPI) -> None:
         if not is_allowed_websocket_origin(origin):
             await websocket.close(code=1008)
             return
+        if not websocket_has_valid_auth(websocket):
+            await websocket.close(code=1008)
+            return
 
         await manager.connect(websocket, session_id)
         try:
@@ -217,6 +226,7 @@ def register_scan_websocket(app: FastAPI) -> None:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             await manager.disconnect(websocket, session_id)
+
 
 
 def is_allowed_websocket_origin(origin: str | None) -> bool:

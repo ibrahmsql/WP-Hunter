@@ -4,18 +4,18 @@ Temodar Agent Plugin Downloader
 Download and extract plugins for analysis.
 """
 
+import http.client
 import ipaddress
 import logging
 import os
 import re
 import shutil
 import socket
+import ssl
 import zipfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
-
-from requests.adapters import HTTPAdapter
 
 from infrastructure.http_client import get_session
 
@@ -63,14 +63,6 @@ class PluginDownloader:
 
         Returns:
             Tuple of (hostname, list_of_validated_ip_strings)
-
-        Blocks:
-        - Non-HTTP(S) schemes
-        - Loopback addresses (127.0.0.0/8, ::1)
-        - Private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-        - Link-local addresses (169.254.0.0/16, fe80::/10)
-        - Cloud metadata endpoints (169.254.169.254)
-        - IPv6 localhost
         """
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -80,7 +72,6 @@ class PluginDownloader:
         if not hostname:
             raise ValueError("Invalid URL: Missing hostname")
 
-        # Block common cloud metadata hostnames
         blocked_hostnames = {
             "metadata.google.internal",
             "metadata.goog",
@@ -95,7 +86,6 @@ class PluginDownloader:
 
         validated_ips: List[str] = []
         try:
-            # Resolve all addresses (IPv4 + IPv6) to prevent dual-stack bypass.
             addr_infos = socket.getaddrinfo(hostname, None)
             if not addr_infos:
                 raise ValueError(f"Could not resolve hostname: {hostname}")
@@ -104,39 +94,30 @@ class PluginDownloader:
                 ip_str = info[4][0]
                 ip_obj = ipaddress.ip_address(ip_str)
 
-                # Comprehensive SSRF protection checks
                 if ip_obj.is_loopback:
                     raise ValueError(
                         f"SSRF Protection: Access to loopback address {ip_str} is blocked"
                     )
-
                 if ip_obj.is_private:
                     raise ValueError(
                         f"SSRF Protection: Access to private IP {ip_str} is blocked"
                     )
-
                 if ip_obj.is_link_local:
                     raise ValueError(
                         f"SSRF Protection: Access to link-local address {ip_str} is blocked"
                     )
-
                 if ip_obj.is_reserved:
                     raise ValueError(
                         f"SSRF Protection: Access to reserved IP {ip_str} is blocked"
                     )
-
                 if ip_obj.is_multicast:
                     raise ValueError(
                         f"SSRF Protection: Access to multicast address {ip_str} is blocked"
                     )
-
-                # Cloud metadata IP check (AWS, GCP, Azure)
                 if str(ip_obj) == "169.254.169.254":
                     raise ValueError(
                         "SSRF Protection: Access to cloud metadata endpoint is blocked"
                     )
-
-                # IPv6 localhost check
                 if str(ip_obj) == "::1":
                     raise ValueError(
                         "SSRF Protection: Access to IPv6 localhost is blocked"
@@ -151,6 +132,53 @@ class PluginDownloader:
             raise ValueError(f"No valid IP addresses resolved for: {hostname}")
 
         return hostname, validated_ips
+
+    def _select_pinned_ip(self, validated_ips: List[str]) -> str:
+        """Prefer IPv4 for URL/transport compatibility, fall back to IPv6."""
+        for ip_str in validated_ips:
+            if ipaddress.ip_address(ip_str).version == 4:
+                return ip_str
+        return validated_ips[0]
+
+    def _open_pinned_response(self, url: str, hostname: str, validated_ips: List[str]):
+        """Open a pinned HTTP(S) response without changing the TLS hostname."""
+        parsed = urlparse(url)
+        pinned_ip = self._select_pinned_ip(validated_ips)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        class PinnedHTTPConnection(http.client.HTTPConnection):
+            def __init__(self, pinned_addr: str, target_host: str, target_port: int, timeout: int):
+                super().__init__(host=target_host, port=target_port, timeout=timeout)
+                self._pinned_addr = pinned_addr
+                self._target_port = target_port
+
+            def connect(self):
+                self.sock = socket.create_connection((self._pinned_addr, self._target_port), self.timeout)
+
+        class PinnedHTTPSConnection(http.client.HTTPSConnection):
+            def __init__(self, pinned_addr: str, target_host: str, target_port: int, timeout: int):
+                context = ssl.create_default_context()
+                super().__init__(host=target_host, port=target_port, timeout=timeout, context=context)
+                self._pinned_addr = pinned_addr
+                self._target_port = target_port
+                self._context = context
+
+            def connect(self):
+                raw_sock = socket.create_connection((self._pinned_addr, self._target_port), self.timeout)
+                self.sock = self._context.wrap_socket(raw_sock, server_hostname=self.host)
+
+        if parsed.scheme == "https":
+            connection = PinnedHTTPSConnection(pinned_ip, hostname, port, 60)
+        else:
+            connection = PinnedHTTPConnection(pinned_ip, hostname, port, 60)
+
+        host_header = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+        connection.request("GET", path, headers={"Host": host_header, "User-Agent": "TemodarAgent/1.0"})
+        response = connection.getresponse()
+        return connection, response
 
     def _validate_zip_archive(self, zip_ref: zipfile.ZipFile) -> None:
         """Validate ZIP to reduce zip-bomb and archive abuse risks."""
@@ -177,86 +205,45 @@ class PluginDownloader:
         if total_uncompressed > self.MAX_TOTAL_UNCOMPRESSED_SIZE:
             raise ValueError("ZIP archive uncompressed size exceeds safety limits")
 
-    def _create_pinned_session(self, hostname: str, validated_ips: List[str]):
-        """Create a requests session that pins DNS to pre-validated IPs.
-
-        This prevents TOCTOU DNS rebinding attacks by forcing the HTTP
-        library to connect only to IPs that passed SSRF validation.
-        """
-        pinned_ip = validated_ips[0]
-
-        class PinnedAdapter(HTTPAdapter):
-            """HTTP adapter that forces connections to a pre-resolved IP."""
-
-            def __init__(self, pinned_host: str, pinned_addr: str, **kwargs):
-                self._pinned_host = pinned_host
-                self._pinned_addr = pinned_addr
-                super().__init__(**kwargs)
-
-            def send(self, request, **kwargs):
-                # Rewrite the URL to use the pinned IP while preserving
-                # the Host header for TLS SNI and virtual hosting.
-                parsed = urlparse(request.url)
-                if parsed.hostname == self._pinned_host:
-                    pinned_url = request.url.replace(
-                        f"://{self._pinned_host}",
-                        f"://{self._pinned_addr}",
-                        1,
-                    )
-                    request.url = pinned_url
-                    request.headers["Host"] = self._pinned_host
-                return super().send(request, **kwargs)
-
-        # Create an independent session so we don't mutate the shared one.
-        import requests as _requests
-        pinned_session = _requests.Session()
-        adapter = PinnedAdapter(hostname, pinned_ip)
-        pinned_session.mount("https://", adapter)
-        pinned_session.mount("http://", adapter)
-        return pinned_session
-
     def _download_zip_with_validated_redirects(self, *, session, download_url: str, zip_path: Path) -> None:
+        del session  # Requests session retained for API compatibility; pinned transport is handled here.
         current_url = download_url
-        final_response = None
-        # Track the pinned session for the initial hostname.
-        active_session = session
 
         for _ in range(self.MAX_REDIRECTS):
             hostname, validated_ips = self._validate_url(current_url)
-            # Pin DNS to validated IPs to prevent TOCTOU rebinding.
-            active_session = self._create_pinned_session(hostname, validated_ips)
-            response = active_session.get(
-                current_url,
-                stream=True,
-                timeout=60,
-                allow_redirects=False,
-            )
-            if response.is_redirect:
-                location = response.headers.get("Location", "")
-                current_url = (
-                    urljoin(current_url, location)
-                    if not urlparse(location).netloc
-                    else location
-                )
-                continue
-            final_response = response
-            break
-        else:
-            raise ValueError("Too many redirects")
+            connection, response = self._open_pinned_response(current_url, hostname, validated_ips)
 
-        if not final_response:
-            raise ValueError("No response received")
-
-        final_response.raise_for_status()
-        total_downloaded = 0
-        with open(zip_path, "wb") as file_handle:
-            for chunk in final_response.iter_content(chunk_size=8192):
-                if not chunk:
+            try:
+                if response.status in {301, 302, 303, 307, 308}:
+                    location = response.getheader("Location", "")
+                    if not location:
+                        raise ValueError("Redirect response missing Location header")
+                    current_url = urljoin(current_url, location)
+                    response.close()
+                    connection.close()
                     continue
-                total_downloaded += len(chunk)
-                if total_downloaded > self.MAX_ZIP_DOWNLOAD_SIZE:
-                    raise ValueError("ZIP archive exceeds download size limit")
-                file_handle.write(chunk)
+
+                if response.status >= 400:
+                    raise ValueError(f"HTTP {response.status}")
+
+                total_downloaded = 0
+                with open(zip_path, "wb") as file_handle:
+                    while True:
+                        chunk = response.read(8192)
+                        if not chunk:
+                            break
+                        total_downloaded += len(chunk)
+                        if total_downloaded > self.MAX_ZIP_DOWNLOAD_SIZE:
+                            raise ValueError("ZIP archive exceeds download size limit")
+                        file_handle.write(chunk)
+                return
+            finally:
+                try:
+                    response.close()
+                finally:
+                    connection.close()
+
+        raise ValueError("Too many redirects")
 
     def _extract_archive(self, *, zip_path: Path, extract_path: Path) -> None:
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
@@ -351,4 +338,3 @@ class PluginDownloader:
                 )
             self._cleanup_failed_download(plugin_dir=plugin_dir)
             return None
-
